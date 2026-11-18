@@ -7,6 +7,8 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+from webhook_logic import draft_replies
+
 MAX_BODY_BYTES = 1024 * 1024
 
 
@@ -63,7 +65,8 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         if len(body) != length:
             return self.respond(400)
-        if not verify_signature(body, self.headers.get("X-Hub-Signature-256", ""), os.environ.get("META_APP_SECRET", "")):
+        if not verify_signature(body, self.headers.get("X-Hub-Signature-256", ""),
+                                os.environ.get("META_APP_SECRET", "")):
             return self.respond(403)
         try:
             payload = json.loads(body)
@@ -71,7 +74,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(400)
         if not isinstance(payload, dict) or payload.get("object") != "whatsapp_business_account":
             return self.respond(400)
-        # Staging only: acknowledge verified events without storing or sending messages.
+        # Stage the sales decision path behind signature verification. The
+        # ephemeral drafts are deliberately discarded: no customer messages
+        # are sent until persistent state and business data are integrated.
+        draft_replies(payload)
         return self.respond(200, b"ok")
 
     def log_message(self, format, *args):
