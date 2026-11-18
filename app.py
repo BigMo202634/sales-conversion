@@ -1,4 +1,4 @@
-"""Staging WhatsApp webhook receiver. It never sends customer messages."""
+"""Staging WhatsApp webhook receiver; outbound is disabled by default."""
 
 import hashlib
 import hmac
@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 from webhook_logic import draft_replies
+from staging_delivery import process
 
 MAX_BODY_BYTES = 1024 * 1024
 
@@ -74,10 +75,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(400)
         if not isinstance(payload, dict) or payload.get("object") != "whatsapp_business_account":
             return self.respond(400)
-        # Stage the sales decision path behind signature verification. The
-        # ephemeral drafts are deliberately discarded: no customer messages
-        # are sent until persistent state and business data are integrated.
-        draft_replies(payload)
+        if os.environ.get("WA_SEND_ENABLED") == "1":
+            try:
+                process(payload)
+            except Exception:
+                # Fail closed. Meta may retry; the durable inbox deduplicates.
+                return self.respond(503)
+        else:
+            # Default staging mode still drafts and discards without sending.
+            draft_replies(payload)
         return self.respond(200, b"ok")
 
     def log_message(self, format, *args):
