@@ -5,7 +5,10 @@ ephemeral and must not be treated as customer responses.
 """
 
 import importlib.util
+import os
 from pathlib import Path
+
+import oim_catalog
 
 
 def _load_prototype():
@@ -59,13 +62,20 @@ def text_messages(payload):
     return found
 
 
-def draft_replies(payload, industry="perfume-beauty"):
+def draft_replies(payload, industry="oim-fragrance"):
     """Return safe offline drafts for testing, with no sending or persistence."""
-    if industry not in ("perfume-beauty", "fashion"):
+    if industry not in ("oim-fragrance", "perfume-beauty", "fashion"):
         raise ValueError("Unsupported industry")
     drafts = []
     for item in text_messages(payload):
-        decision = _prototype.reply(item["body"], industry)
+        if industry == "oim-fragrance":
+            decision = oim_catalog.reply(
+                item["body"],
+                momo_number=os.environ.get("OIM_MOMO_NUMBER"),
+                momo_name=os.environ.get("OIM_MOMO_NAME"),
+            )
+        else:
+            decision = _prototype.reply(item["body"], industry)
         drafts.append({**item, "intent": decision["intent"],
                        "reply": decision["reply"], "action": decision["action"]})
     return drafts

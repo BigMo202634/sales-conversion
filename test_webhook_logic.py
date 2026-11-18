@@ -23,12 +23,14 @@ def event(body="How much is it?", message_type="text"):
 
 
 class WebhookLogicTests(unittest.TestCase):
-    def test_text_creates_grounded_draft_without_inventing_price(self):
+    def test_text_creates_oim_catalog_draft(self):
         draft = draft_replies(event())[0]
         self.assertEqual(draft["message_id"], "wamid.123")
         self.assertEqual(draft["phone_number_id"], "business-phone")
-        self.assertEqual(draft["intent"], "price")
-        self.assertNotIn("₦", draft["reply"])
+        self.assertEqual(draft["intent"], "catalog")
+        self.assertIn("OIM_MIRAYA", draft["reply"])
+        self.assertIn("30ml GH₵120", draft["reply"])
+        self.assertNotIn("in stock", draft["reply"])
 
     def test_opt_out_draft(self):
         draft = draft_replies(event("STOP"))[0]
