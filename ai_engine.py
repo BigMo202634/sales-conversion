@@ -92,7 +92,6 @@ def _openai_compatible(messages, business, env, post=None):
     """Return the model's raw JSON text from an OpenAI-style chat endpoint."""
     url = env["AI_BASE_URL"].rstrip("/") + "/chat/completions"
     body = {"model": env["AI_MODEL"], "temperature": 0.4, "max_tokens": 2000,  # room for reasoning models
-            "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": system_prompt(business) + JSON_INSTRUCTION},
                          *messages]}
     # Some hosts (Groq sits behind Cloudflare) reject Python's default user agent.
@@ -143,9 +142,18 @@ def _log_failure(exc, env):
 
 
 def _parse(text):
-    # Small local models sometimes wrap the JSON in prose or code fences.
+    # Open models sometimes wrap the JSON in prose or code fences, or skip it.
+    # Strict JSON modes reject those answers outright, so we parse leniently.
     start, end = text.find("{"), text.rfind("}")
-    result = json.loads(text[start:end + 1])
+    try:
+        result = json.loads(text[start:end + 1]) if 0 <= start < end else None
+    except ValueError:
+        result = None
+    if not isinstance(result, dict):
+        plain = text.strip().strip("`").strip()
+        if not plain or len(plain) > 600 or "{" in plain:
+            raise ValueError("no usable reply")
+        result = {"reply": plain, "intent": "other", "needs_human": False}
     if result.get("intent") not in INTENTS:
         result["intent"] = "other"
     if not isinstance(result.get("needs_human"), bool):

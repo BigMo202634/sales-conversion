@@ -53,7 +53,7 @@ class AIEngineTests(unittest.TestCase):
         good = {"reply": "ok", "intent": "other", "needs_human": False}
         for value in (response(good, stop_reason="refusal"),
                       response(good, stop_reason="max_tokens"),
-                      response("not json"),
+                      response('{"reply": broken'),
                       response({**good, "reply": "  "}),
                       TimeoutError("slow")):
             self.assertIsNone(ai_engine.reply("hello", OIM, (), ENV, client_returning(value)))
@@ -108,6 +108,14 @@ class AIEngineTests(unittest.TestCase):
         self.assertEqual((line["event"], line["http_status"], line["detail"]),
                          ("ai_failed", 403, "error code: 1010"))
         self.assertNotIn("secret", stderr.getvalue())
+
+    def test_plain_text_answer_is_used(self):
+        env = {"AI_PROVIDER": "openai_compatible", "AI_BASE_URL": "http://x/v1", "AI_MODEL": "m"}
+        plain = lambda *_: {"choices": [{"finish_reason": "stop", "message": {
+            "content": "I understand! The 6ml is just GH₵25. Want to try that?"}}]}
+        result = ai_engine.reply("too expensive", OIM, (), env, post=plain)
+        self.assertEqual((result["reply"], result["intent"], result["needs_human"]),
+                         ("I understand! The 6ml is just GH₵25. Want to try that?", "ai_other", False))
 
     def test_openai_compatible_falls_back(self):
         env = {"AI_PROVIDER": "openai_compatible", "AI_BASE_URL": "http://x/v1", "AI_MODEL": "m"}
