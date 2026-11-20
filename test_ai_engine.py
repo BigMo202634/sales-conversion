@@ -93,6 +93,21 @@ class AIEngineTests(unittest.TestCase):
         keyed = {**env, "AI_API_KEY": "free-key"}
         ai_engine.reply("hi", OIM, (), keyed, post=post)
         self.assertEqual(sent["headers"]["Authorization"], "Bearer free-key")
+        self.assertNotIn("Python", sent["headers"]["User-Agent"])
+
+    def test_failure_is_logged_without_customer_text(self):
+        import io
+        from unittest.mock import patch
+        from urllib.error import HTTPError
+        env = {"AI_PROVIDER": "openai_compatible", "AI_BASE_URL": "http://x/v1", "AI_MODEL": "m"}
+        denied = HTTPError("http://x", 403, "Forbidden", {}, io.BytesIO(b"error code: 1010"))
+        stderr = io.StringIO()
+        with patch("sys.stderr", stderr):
+            ai_engine.reply("my secret message", OIM, (), env, post=Mock(side_effect=denied))
+        line = json.loads(stderr.getvalue())
+        self.assertEqual((line["event"], line["http_status"], line["detail"]),
+                         ("ai_failed", 403, "error code: 1010"))
+        self.assertNotIn("secret", stderr.getvalue())
 
     def test_openai_compatible_falls_back(self):
         env = {"AI_PROVIDER": "openai_compatible", "AI_BASE_URL": "http://x/v1", "AI_MODEL": "m"}
