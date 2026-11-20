@@ -212,7 +212,16 @@ def _owner_message(db, business, item, link, config, send, env):
     log("owner_relayed", business=business.id, channel=channel)
 
 
-def _deliver(db, item, key, business, token, config, send):
+def forget_customer(db, business_id, channel, customer):
+    """Erase what we store about one customer's conversation."""
+    for table, column in (("conversation_messages", "customer"), ("handoffs", "customer"),
+                          ("alert_links", "customer")):
+        _update(db, f"DELETE FROM {table} WHERE business_id = %s AND channel = %s "
+                    f"AND {column} = %s", (business_id, channel, customer))
+    log("customer_data_deleted", business=business_id, channel=channel)
+
+
+def _deliver(db, item, key, business, token, config, send, remember=True):
     """Send one reply. Returns True if Meta accepted it."""
     # A crash after this commit can lose a reply, but cannot duplicate it.
     _update(db, "UPDATE message_inbox SET state = 'attempted', updated_at = now() "
@@ -225,7 +234,8 @@ def _deliver(db, item, key, business, token, config, send):
         log("send_failed", business=business.id, channel=item["channel"], **meta_error(exc))
         return False
     log("sent", business=business.id, channel=item["channel"], intent=item["intent"])
-    save_turns(db, business.id, item["channel"], item["sender"], item["body"], item["reply"])
+    if remember:
+        save_turns(db, business.id, item["channel"], item["sender"], item["body"], item["reply"])
     _set_state(db, key, "sent", outgoing_id)
     return True
 
@@ -259,7 +269,7 @@ def process(payload, config=None, businesses=None, connect=None, send=send_messa
             if channel == "whatsapp" and item["sender"] in alerts.owner_numbers(business, env):
                 link = handoff.find_link(db, business.id, item.get("reply_to"))
             # No record or send outside this business's explicit test scope.
-            if link is None and item["sender"] not in business.recipients(channel, env):
+            if link is None and not business.can_reply(channel, item["sender"], env):
                 log("skipped", reason="sender_not_test_recipient", business=business.id,
                     channel=channel)
                 continue
@@ -285,6 +295,10 @@ def process(payload, config=None, businesses=None, connect=None, send=send_messa
                 continue
 
             customer = item["sender"]
+            if item["action"] == "delete_data":
+                forget_customer(db, business.id, channel, customer)
+                _deliver(db, item, key, business, token, config, send, remember=False)
+                continue
             history = load_history(db, business.id, channel, customer)
             if handoff.is_active(db, business.id, channel, customer):
                 # The owner has this chat: forward, never answer.

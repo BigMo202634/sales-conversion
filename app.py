@@ -10,6 +10,8 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+import businesses as business_config
+import pages
 from webhook_logic import OBJECT_CHANNELS, draft_replies
 from staging_delivery import log, process, send_enabled, send_reminders
 
@@ -26,14 +28,35 @@ def verify_challenge(query, expected_token):
     return challenge if hmac.compare_digest(token, expected_token) else None
 
 
-def verify_signature(body, header, app_secret):
-    if not app_secret or not header.startswith("sha256="):
+def verify_signature(body, header, app_secrets):
+    """True if the body is signed by any of our Meta apps.
+
+    Each client can run their own Meta app, and each app signs with its own secret.
+    """
+    if isinstance(app_secrets, str):
+        app_secrets = [app_secrets]
+    secrets = [s for s in app_secrets if s]
+    if not secrets or not header.startswith("sha256="):
         return False
     supplied = header.removeprefix("sha256=")
     if len(supplied) != 64:
         return False
-    expected = hmac.new(app_secret.encode(), body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(supplied, expected)
+    matched = False
+    for secret in secrets:
+        expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        matched |= hmac.compare_digest(supplied, expected)
+    return matched
+
+
+def app_secrets(env=None):
+    """META_APP_SECRET plus each business's own app secret (secrets.app_secret)."""
+    env = os.environ if env is None else env
+    found = [env.get("META_APP_SECRET", "")]
+    try:
+        found += [b.secret("app_secret", env) for b in business_config.load(env).values()]
+    except Exception as exc:
+        log("business_config_failed", error=type(exc).__name__)
+    return [s for s in found if s]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -49,6 +72,9 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path)
         if path.path == "/health":
             return self.respond(200, b"ok")
+        if path.path in pages.PAGES:
+            return self.respond(200, pages.render(path.path).encode("utf-8"),
+                                "text/html; charset=utf-8")
         if path.path == "/tasks/reminders":
             return self.reminders(path.query)
         if path.path != "/webhook":
@@ -88,7 +114,7 @@ class Handler(BaseHTTPRequestHandler):
         if len(body) != length:
             return self.respond(400)
         if not verify_signature(body, self.headers.get("X-Hub-Signature-256", ""),
-                                os.environ.get("META_APP_SECRET", "")):
+                                app_secrets()):
             log("signature_rejected")
             return self.respond(403)
         try:

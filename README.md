@@ -81,8 +81,9 @@ Add an entry to `businesses.json` (or put the whole list in the
 | `delivery`, `greeting`, `price_note` | Optional business wording |
 | `sales_notes` | Optional true selling points the AI may use |
 | `ai` | `false` keeps this business on rule replies |
-| `test_recipients` | Per channel, the only senders who may get real replies while testing |
-| `secrets` | **Names** of env vars holding `whatsapp_token`, `page_token`, `payment_number`, `payment_name`, `owner_alert_numbers` |
+| `live` | `true` answers every customer. Leave it out (or `false`) while testing: then only `test_recipients` get replies |
+| `test_recipients` | Per channel, the only senders who may get replies while the business is not `live` |
+| `secrets` | **Names** of env vars holding `whatsapp_token`, `page_token`, `payment_number`, `payment_name`, `owner_alert_numbers`, `app_secret` (the client's own Meta app secret, if they have their own app) |
 
 Never put tokens or payment details in this repository; set them in Render's
 Environment page under the names listed in `secrets`. A product with no price
@@ -123,6 +124,32 @@ someone (owner or customer) who wrote to it in the last 24 hours, and in Meta
 development mode only to allowed test numbers. Opt-outs never alert. Photos
 (e.g. payment screenshots) are not handled yet. Logs show `alert_sent`,
 `owner_relayed`, `handoff_closed` and `reminders_checked`, never message text.
+
+## Onboarding a client
+
+1. Add their entry to `businesses.json` with `live` left out, their WhatsApp
+   phone number ID under `channels`, and secret **names** such as
+   `ADA_WA_TOKEN`, `ADA_OWNER_ALERT_NUMBERS`, `ADA_MOMO_NUMBER`,
+   `ADA_MOMO_NAME`, `ADA_META_APP_SECRET`.
+2. Set those env vars in Render.
+3. In the client's Meta app: webhook URL `https://api.thescribenetwork.com/webhook`,
+   the same `WA_VERIFY_TOKEN`, subscribe to `messages`, and subscribe the WABA to
+   the app (`POST /{waba-id}/subscribed_apps`). Privacy policy URL:
+   `https://api.thescribenetwork.com/privacy`; data deletion instructions URL:
+   `https://api.thescribenetwork.com/data-deletion`.
+4. Test from a number in `test_recipients`, then set `"live": true` and deploy.
+
+The privacy page names the operator from `PRIVACY_OPERATOR` (default
+"The Scribe Network") and the contact from `PRIVACY_CONTACT`. Customers can
+send "delete my data" to erase their saved conversation.
+
+## Database
+
+Any PostgreSQL works; tables are created on first use. Render's free database
+is deleted after 30 days, so for clients use a free database that doesn't
+expire, such as Neon (neon.tech) or Supabase. Paste its connection string
+(with `sslmode=require`) into `DATABASE_URL` in Render. Moving loses only
+in-flight history and dedupe records, which is fine before launch.
 
 ## Render Web Service
 

@@ -36,6 +36,7 @@ class Business:
     price_note: str = ""
     sales_notes: str = ""
     ai: bool = True
+    live: bool = False
     test_recipients: dict = field(default_factory=dict)
     secrets: dict = field(default_factory=dict)
 
@@ -53,6 +54,10 @@ class Business:
         listed.update(x.strip() for x in extra.split(",")
                       if re.fullmatch(r"[1-9][0-9]{4,24}", x.strip()))
         return listed
+
+    def can_reply(self, channel, sender, env=None):
+        """Live businesses answer every customer; others only their test list."""
+        return self.live or sender in self.recipients(channel, env)
 
 
 def _parse(entry):
@@ -89,6 +94,7 @@ def _parse(entry):
         price_note=str(entry.get("price_note", "")),
         sales_notes=str(entry.get("sales_notes", "")),
         ai=entry.get("ai", True) is not False,
+        live=entry.get("live", False) is True,
         test_recipients=recipients,
         secrets={k: str(v) for k, v in entry.get("secrets", {}).items()},
     )
