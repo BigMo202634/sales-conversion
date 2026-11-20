@@ -53,5 +53,8 @@ is never quoted: the reply says the team will confirm.
 The service rejects all webhook requests until both values are set. Render
 supplies `PORT`. Test with `python -m unittest -v`.
 
+The OIM entry uses the Meta test number's phone number ID
+(`1514208075102159`, app "Sales Conversion Agent") so demos reply as OIM.
+
 `sales-conversion-mvp/` is the earlier offline prototype; the webhook no
 longer uses it.
