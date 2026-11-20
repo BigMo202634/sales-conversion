@@ -34,7 +34,7 @@ class AIEngineTests(unittest.TestCase):
         result = ai_engine.reply("price of boss 30ml", OIM, history, ENV, client)
         self.assertEqual(result, {"intent": "ai_price", "action": "ai_reply",
                                   "reply": "OIM_BOSS 30ml is GH₵120. How many?",
-                                  "needs_human": False})
+                                  "needs_human": False, "share_payment": False})
         kwargs = client.beta.messages.create.call_args.kwargs
         self.assertEqual(kwargs["model"], "claude-opus-5-5")
         self.assertEqual(kwargs["messages"][-1], {"role": "user", "content": "price of boss 30ml"})
@@ -60,14 +60,14 @@ class AIEngineTests(unittest.TestCase):
 
     def test_disabled_without_key_or_when_switched_off(self):
         client = client_returning(response({"reply": "ok", "intent": "other",
-                                            "needs_human": False}))
+                                            "needs_human": False, "share_payment": False}))
         self.assertIsNone(ai_engine.reply("hello", OIM, (), {}, client))
         self.assertIsNone(ai_engine.reply("hello", OIM, (), {**ENV, "AI_REPLIES": "0"}, client))
         client.beta.messages.create.assert_not_called()
 
     def test_model_override(self):
         client = client_returning(response({"reply": "ok", "intent": "other",
-                                            "needs_human": False}))
+                                            "needs_human": False, "share_payment": False}))
         ai_engine.reply("hello", OIM, (), {**ENV, "AI_MODEL": "claude-sonnet-5-5"}, client)
         self.assertEqual(client.beta.messages.create.call_args.kwargs["model"],
                          "claude-sonnet-5-5")

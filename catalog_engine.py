@@ -74,7 +74,7 @@ def reply(message, business, env=None):
     if re.search(r"\b(paid|sent payment|transfer sent|receipt|payment proof)\b", lowered):
         return {"intent": "payment", "action": "verify_payment",
                 "reply": f"Thank you. {team[0].upper() + team[1:]} will verify the payment before confirming your order."}
-    if re.search(r"\b(momo|mobile money|payment details|account details|bank details|pay to|pay for|how do i pay)\b", lowered):
+    if re.search(r"\b(momo|mobile money|payment details|payment account|account number|account details|bank details|pay to|pay for|how (?:do|can|should) i pay|where (?:do|can|should) i pay|send (?:me )?(?:the |your )?account)\b", lowered):
         number = business.secret("payment_number", env)
         name = business.secret("payment_name", env)
         if number and name:

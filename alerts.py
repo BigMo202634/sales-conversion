@@ -21,6 +21,12 @@ REASONS = {
     "verify_payment": "Customer says they have paid. Please verify",
     "request_payment_details": "Customer asked for payment details",
 }
+FOLLOW_UPS = {
+    "customer_message": "💬 Customer replied",
+    "reminder": "⏰ Customer is still waiting for your reply",
+}
+HOW_TO_REPLY = ("↩️ Swipe-reply to this message to answer the customer. "
+                "Reply done to hand the chat back to the assistant.")
 MAX_BODY = 1500
 
 
@@ -39,7 +45,8 @@ def _clip(text, limit=200):
 
 
 def alert_text(business, item, history, reason):
-    lines = [f"🔔 {business.name}: {REASONS.get(reason, 'Customer needs you')}"]
+    title = FOLLOW_UPS.get(reason) or "🔔 " + REASONS.get(reason, "Customer needs you")
+    lines = [f"{business.name}: {title}"]
     if item["channel"] == "whatsapp":
         lines.append(f"Customer: +{item['sender']} (wa.me/{item['sender']})")
     else:
@@ -50,34 +57,33 @@ def alert_text(business, item, history, reason):
         for turn in history[-4:]:
             who = "Customer" if turn["role"] == "user" else "Us"
             lines.append(f"{who}: {_clip(turn['content'], 160)}")
+    if item.get("body"):
+        lines.append("")
+        lines.append(f"Customer: {_clip(item['body'])}")
+        if item.get("reply"):
+            lines.append(f"Us: {_clip(item['reply'])}")
     lines.append("")
-    lines.append(f"Customer: {_clip(item['body'])}")
-    if item.get("reply") and reason == "ai_handoff":
-        lines.append(f"Us: {_clip(item['reply'])}")
-    lines.append("")
-    lines.append("Please follow up to confirm the order, payment and delivery.")
+    lines.append(HOW_TO_REPLY)
     text = "\n".join(lines)
     return text if len(text) <= MAX_BODY else text[:MAX_BODY - 1] + "…"
 
 
 def notify_owner(business, item, history, reason, config, send, env):
-    """Send one alert per owner number. Returns how many were sent."""
+    """Send one alert per owner number. Returns the sent alert message IDs."""
     numbers = owner_numbers(business, env)
     account = business.channels.get("whatsapp")
     token = business.secret("whatsapp_token", env)
     if not numbers or not account or not token:
         _log("alert_skipped", business=business.id, reason="no_owner_number_or_whatsapp")
-        return 0
+        return []
     text = alert_text(business, item, history, reason)
-    sent = 0
+    sent = []
     for number in numbers:
         alert = {"channel": "whatsapp", "account_id": account, "sender": number,
                  "message_id": None, "reply": text}
         try:
-            send(alert, token, config)
+            sent.append(send(alert, token, config))
         except Exception as exc:
             _log("alert_failed", business=business.id, error=type(exc).__name__)
-        else:
-            sent += 1
-    _log("alert_sent", business=business.id, reason=reason, count=sent)
+    _log("alert_sent", business=business.id, reason=reason, count=len(sent))
     return sent
