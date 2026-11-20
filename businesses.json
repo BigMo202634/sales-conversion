@@ -28,7 +28,8 @@
       "whatsapp_test_recipients": "WA_ALLOWED_TEST_RECIPIENTS",
       "page_token": "OIM_PAGE_ACCESS_TOKEN",
       "payment_number": "OIM_MOMO_NUMBER",
-      "payment_name": "OIM_MOMO_NAME"
+      "payment_name": "OIM_MOMO_NAME",
+      "owner_alert_numbers": "OIM_OWNER_ALERT_NUMBERS"
     }
   }
 ]

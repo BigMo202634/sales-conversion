@@ -82,11 +82,47 @@ Add an entry to `businesses.json` (or put the whole list in the
 | `sales_notes` | Optional true selling points the AI may use |
 | `ai` | `false` keeps this business on rule replies |
 | `test_recipients` | Per channel, the only senders who may get real replies while testing |
-| `secrets` | **Names** of env vars holding `whatsapp_token`, `page_token`, `payment_number`, `payment_name` |
+| `secrets` | **Names** of env vars holding `whatsapp_token`, `page_token`, `payment_number`, `payment_name`, `owner_alert_numbers` |
 
 Never put tokens or payment details in this repository; set them in Render's
 Environment page under the names listed in `secrets`. A product with no price
 is never quoted: the reply says the team will confirm.
+
+## Owner takeover, payments and reminders
+
+**Alerts.** When the AI says a customer is ready to order or needs the team,
+or a rule hands the chat over (asks for a person, says they paid, asks for
+payment details when none are set up), the customer gets a short
+acknowledgement and the owner gets a WhatsApp alert from the business number:
+customer number, `wa.me` link and the last few messages. Owner numbers
+(international digits, comma-separated) go in the env var named by
+`secrets.owner_alert_numbers`, e.g. `OIM_OWNER_ALERT_NUMBERS`.
+
+**Owner mode.** From that moment the assistant stops answering that customer.
+Every new customer message is forwarded to the owner instead. The owner
+answers by swipe-replying to an alert; the text is sent to the customer from
+the business number and kept in the assistant's memory. Replying `done` to an
+alert hands the chat back to the assistant. Owner mode also ends by itself
+after 24 hours without activity. A message from an owner number that is not a
+swipe-reply to an alert is treated as a normal customer message, so the owner
+can still test the assistant from the same phone.
+
+**Payments.** If `payment_number` and `payment_name` are set (OIM:
+`OIM_MOMO_NUMBER`, `OIM_MOMO_NAME`), the agent sends those exact details when a
+buyer asks how to pay. The AI never writes account numbers; it only asks for
+them to be attached. "I have paid" opens owner mode and alerts the owner to
+verify.
+
+**Reminders.** `GET /tasks/reminders?key=<TASKS_KEY>` re-alerts the owner every
+10 minutes (up to 6 times) while a customer is waiting for the owner. Call it
+every 5 minutes from a free scheduler such as cron-job.org; that also keeps the
+free Render instance awake.
+
+WhatsApp limits: the business number can only send free-form messages to
+someone (owner or customer) who wrote to it in the last 24 hours, and in Meta
+development mode only to allowed test numbers. Opt-outs never alert. Photos
+(e.g. payment screenshots) are not handled yet. Logs show `alert_sent`,
+`owner_relayed`, `handoff_closed` and `reminders_checked`, never message text.
 
 ## Render Web Service
 
@@ -96,7 +132,8 @@ is never quoted: the reply says the team will confirm.
 - Environment: `WA_VERIFY_TOKEN` (random private value), `META_APP_SECRET`
 
 The service rejects all webhook requests until both values are set. Render
-supplies `PORT`. Test with `python -m unittest -v`.
+supplies `PORT`. Test with `python -m unittest -v`; the delivery tests also
+need `TEST_DATABASE_URL` pointing at an empty scratch PostgreSQL database.
 
 The OIM entry uses the Meta test number's phone number ID
 (`1514208075102159`, app "Sales Conversion Agent") so demos reply as OIM.

@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 from webhook_logic import OBJECT_CHANNELS, draft_replies
-from staging_delivery import log, process, send_enabled
+from staging_delivery import log, process, send_enabled, send_reminders
 
 MAX_BODY_BYTES = 1024 * 1024
 
@@ -49,6 +49,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path)
         if path.path == "/health":
             return self.respond(200, b"ok")
+        if path.path == "/tasks/reminders":
+            return self.reminders(path.query)
         if path.path != "/webhook":
             return self.respond(404)
         token = os.environ.get("WA_VERIFY_TOKEN", "")
@@ -56,6 +58,22 @@ class Handler(BaseHTTPRequestHandler):
         if challenge is None:
             return self.respond(403)
         return self.respond(200, challenge.encode("utf-8"))
+
+    def reminders(self, query):
+        """Called every few minutes by an external scheduler (it also keeps the
+        free Render instance awake). Needs ?key= matching TASKS_KEY."""
+        expected = os.environ.get("TASKS_KEY", "")
+        supplied = parse_qs(query).get("key", [""])[0]
+        if not expected or not hmac.compare_digest(supplied, expected):
+            return self.respond(403)
+        if not send_enabled():
+            return self.respond(200, b"sending disabled")
+        try:
+            count = send_reminders()
+        except Exception as exc:
+            log("reminders_failed", error=type(exc).__name__)
+            return self.respond(503)
+        return self.respond(200, f"ok {count}".encode())
 
     def do_POST(self):
         if urlsplit(self.path).path != "/webhook":

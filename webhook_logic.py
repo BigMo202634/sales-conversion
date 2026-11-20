@@ -38,7 +38,8 @@ def _whatsapp(entry):
             if message.get("type") != "text":
                 continue
             found.append((account, message.get("from"), message.get("id"),
-                          _dict(message.get("text")).get("body")))
+                          _dict(message.get("text")).get("body"),
+                          _dict(message.get("context")).get("id")))
     return found
 
 
@@ -52,7 +53,7 @@ def _messaging(entry):
         if not message or message.get("is_echo"):
             continue  # Skip our own outgoing messages echoed back.
         found.append((account, _dict(event.get("sender")).get("id"),
-                      message.get("mid"), message.get("text")))
+                      message.get("mid"), message.get("text"), None))
     return found
 
 
@@ -68,12 +69,13 @@ def inbound_messages(payload):
     for entry in _list(payload.get("entry")):
         if not isinstance(entry, dict):
             continue
-        for account, sender, message_id, body in extract(entry):
+        for account, sender, message_id, body, reply_to in extract(entry):
             account = str(account) if isinstance(account, (str, int)) else None
             if not _valid(account, sender, message_id, body) or len(body) > MAX_TEXT:
                 continue
             found.append({"channel": channel, "account_id": account,
-                          "sender": sender, "message_id": message_id, "body": body})
+                          "sender": sender, "message_id": message_id, "body": body,
+                          "reply_to": reply_to if isinstance(reply_to, str) else None})
     return found
 
 

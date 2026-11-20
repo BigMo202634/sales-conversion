@@ -42,11 +42,12 @@ def sample_businesses():
 
 
 def whatsapp_event(body="How much is it?", sender=CUSTOMER_WA, phone_id=WA_PHONE_ID,
-                   message_type="text", message_id="wamid.123"):
+                   message_type="text", message_id="wamid.123", reply_to=None):
+    message = {"id": message_id, "from": sender, "type": message_type, "text": {"body": body}}
+    if reply_to:
+        message["context"] = {"id": reply_to}
     return {"object": "whatsapp_business_account", "entry": [{"changes": [{"value": {
-        "metadata": {"phone_number_id": phone_id},
-        "messages": [{"id": message_id, "from": sender, "type": message_type,
-                      "text": {"body": body}}]}}]}]}
+        "metadata": {"phone_number_id": phone_id}, "messages": [message]}}]}]}
 
 
 def messaging_event(obj="page", body="How much is it?", sender=CUSTOMER_PSID,
