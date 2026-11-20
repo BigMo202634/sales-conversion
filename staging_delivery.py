@@ -9,7 +9,8 @@ or ambiguous send is held for manual review, never retried automatically.
 import json
 import os
 import re
-from urllib import request
+import sys
+from urllib import error, request
 
 import businesses as business_config
 from webhook_logic import draft_replies
@@ -39,6 +40,24 @@ TOKEN_KEYS = {"whatsapp": "whatsapp_token", "messenger": "page_token",
 
 class ConfigurationError(RuntimeError):
     pass
+
+
+def log(event, **fields):
+    """Write one JSON line to Render's log. Never pass message text or sender IDs."""
+    print(json.dumps({"event": event, **fields}), file=sys.stderr, flush=True)
+
+
+def meta_error(exc):
+    """Summarise a failed Meta call without customer data."""
+    if isinstance(exc, error.HTTPError):
+        try:
+            detail = json.load(exc).get("error", {})
+        except Exception:
+            detail = {}
+        return {"http_status": exc.code, "code": detail.get("code"),
+                "subcode": detail.get("error_subcode"), "type": detail.get("type"),
+                "message": str(detail.get("message", ""))[:200]}
+    return {"error": type(exc).__name__}
 
 
 def send_enabled(env=None):
@@ -112,9 +131,12 @@ def process(payload, config=None, businesses=None, connect=None, send=send_messa
             channel = item["channel"]
             # No record or send outside this business's explicit test scope.
             if item["sender"] not in business.recipients(channel, env):
+                log("skipped", reason="sender_not_test_recipient", business=business.id,
+                    channel=channel)
                 continue
             token = business.secret(TOKEN_KEYS[channel], env)
             if not token:
+                log("skipped", reason="no_token", business=business.id, channel=channel)
                 continue
             key = (channel, item["message_id"])
             is_handoff = item["action"] in HANDOFF_ACTIONS
@@ -126,17 +148,21 @@ def process(payload, config=None, businesses=None, connect=None, send=send_messa
                 (*key, business.id, item["account_id"], item["sender"], item["intent"],
                  "suppressed" if is_handoff else "pending")) == 1
             if not inserted or is_handoff:
+                log("not_sent", reason="duplicate" if not inserted else "handoff",
+                    business=business.id, channel=channel, intent=item["intent"])
                 continue
             # A crash after this commit can lose a reply, but cannot duplicate it.
             _update(db, "UPDATE message_inbox SET state = 'attempted', updated_at = now() "
                         "WHERE channel = %s AND message_id = %s AND state = 'pending'", key)
             try:
                 outgoing_id = send(item, token, config)
-            except Exception:
+            except Exception as exc:
                 # No automatic retry: a timeout may mean Meta accepted the send.
                 _update(db, "UPDATE message_inbox SET state = 'review', updated_at = now() "
                             "WHERE channel = %s AND message_id = %s", key)
+                log("send_failed", business=business.id, channel=channel, **meta_error(exc))
             else:
+                log("sent", business=business.id, channel=channel, intent=item["intent"])
                 _update(db, "UPDATE message_inbox SET state = 'sent', "
                             "outgoing_message_id = %s, updated_at = now() "
                             "WHERE channel = %s AND message_id = %s", (outgoing_id, *key))
