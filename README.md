@@ -53,7 +53,7 @@ Pick a provider with `AI_PROVIDER`:
 Free test setups with `AI_PROVIDER=openai_compatible`:
 
 - Groq free tier: `AI_BASE_URL=https://api.groq.com/openai/v1`,
-  `AI_MODEL=llama-3.3-70b-versatile`, `AI_API_KEY` from console.groq.com.
+  `AI_MODEL=openai/gpt-oss-120b`, `AI_API_KEY` from console.groq.com.
 - Gemini free tier: `AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai`,
   `AI_MODEL=gemini-2.5-flash`, `AI_API_KEY` from aistudio.google.com.
 - Ollama on your own computer: `ollama pull qwen2.5:7b`, expose port 11434
