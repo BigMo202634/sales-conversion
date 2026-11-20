@@ -77,15 +77,24 @@ def inbound_messages(payload):
     return found
 
 
-def draft_replies(payload, businesses=None, env=None):
-    """Return drafts for messages sent to known businesses. Nothing is sent."""
-    businesses = business_config.load() if businesses is None else businesses
-    drafts = []
+def routed_messages(payload, businesses):
+    """Inbound text messages paired with the business that owns the account."""
+    routed = []
     for item in inbound_messages(payload):
         business = business_config.find(businesses, item["channel"], item["account_id"])
-        if business is None:
-            continue
-        decision = catalog_engine.reply(item["body"], business, env)
-        drafts.append({**item, "business_id": business.id, "intent": decision["intent"],
-                       "reply": decision["reply"], "action": decision["action"]})
-    return drafts
+        if business is not None:
+            routed.append({**item, "business_id": business.id})
+    return routed
+
+
+def rule_decision(item, business, env=None):
+    decision = catalog_engine.reply(item["body"], business, env)
+    return {**item, "intent": decision["intent"], "reply": decision["reply"],
+            "action": decision["action"]}
+
+
+def draft_replies(payload, businesses=None, env=None):
+    """Return rule-based drafts for messages to known businesses. Nothing is sent."""
+    businesses = business_config.load() if businesses is None else businesses
+    return [rule_decision(item, businesses[item["business_id"]], env)
+            for item in routed_messages(payload, businesses)]

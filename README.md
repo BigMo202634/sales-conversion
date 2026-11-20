@@ -6,8 +6,9 @@ Messenger and Instagram DMs. It serves `GET /health`, answers Meta's
 HMAC on every `POST /webhook`.
 
 **By default it drafts replies and discards them. It sends nothing.** Sending is
-gated; see [STAGING_DELIVERY.md](STAGING_DELIVERY.md). Replies are still
-rule-based, not AI. Do not connect a live business number yet.
+gated; see [STAGING_DELIVERY.md](STAGING_DELIVERY.md). When sending is on and
+`ANTHROPIC_API_KEY` is set, Claude writes the replies (see "AI replies" below).
+Do not connect a live business number yet.
 
 ## How a message flows
 
@@ -21,6 +22,32 @@ rule-based, not AI. Do not connect a live business number yet.
 4. `catalog_engine.py` drafts a reply from that business's own catalog,
    currency, delivery note and greeting. Opt-outs, "talk to a human" and
    payment claims are never answered with a sales reply.
+5. If the message passed those guardrails, `ai_engine.py` asks Claude for a
+   salesperson-style reply using only that business's facts and the last few
+   turns of the chat. Any AI failure falls back to the rule reply from step 4.
+
+## AI replies
+
+The rule engine always runs first: opt-outs, "talk to a human", payment
+claims and payment-detail requests never reach the AI. For everything else
+Claude replies like a friendly salesperson: it finds out what the customer
+wants, recommends a listed product and size, handles price worries with a
+smaller listed option, and asks for quantity and delivery area. It may only use
+the products, prices and delivery wording in `businesses.json`; it never
+invents stock, discounts, delivery dates or fees, never confirms payment or
+orders, and never shares payment details. When the customer is ready to order
+or upset, the reply says the team will follow up and the event is logged as
+`handoff_requested`.
+
+| Env var | Meaning |
+|---|---|
+| `ANTHROPIC_API_KEY` | Required to turn AI replies on. Without it, rule replies are used |
+| `AI_MODEL` | Optional model override (default `claude-opus-5-5`) |
+| `AI_REPLIES` | Set to `0` to switch AI off for every business |
+
+A business can also set `"ai": false` to keep rule replies, and
+`sales_notes` (free text) to give the AI real selling points, e.g. how long a
+scent lasts or which items are bestsellers.
 
 ## Adding a business
 
@@ -36,6 +63,8 @@ Add an entry to `businesses.json` (or put the whole list in the
 | `catalog.products` | `name`, optional `aliases`, optional `prices` per option (`{"M": 25000}`) |
 | `catalog.default_prices` | Prices shared by every product, e.g. perfume sizes |
 | `delivery`, `greeting`, `price_note` | Optional business wording |
+| `sales_notes` | Optional true selling points the AI may use |
+| `ai` | `false` keeps this business on rule replies |
 | `test_recipients` | Per channel, the only senders who may get real replies while testing |
 | `secrets` | **Names** of env vars holding `whatsapp_token`, `page_token`, `payment_number`, `payment_name` |
 

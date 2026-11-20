@@ -12,8 +12,9 @@ import re
 import sys
 from urllib import error, request
 
+import ai_engine
 import businesses as business_config
-from webhook_logic import draft_replies
+from webhook_logic import routed_messages, rule_decision
 
 
 SCHEMA = """
@@ -31,6 +32,20 @@ CREATE TABLE IF NOT EXISTS message_inbox (
     PRIMARY KEY (channel, message_id)
 )
 """
+
+CONVERSATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS conversation_messages (
+    id BIGSERIAL PRIMARY KEY,
+    business_id TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    customer TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    body TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+"""
+HISTORY_TURNS = 12
+HISTORY_DAYS = 7
 
 HANDOFF_ACTIONS = ("human_handoff", "verify_payment", "suppress_followups",
                    "request_payment_details")
@@ -109,6 +124,34 @@ def _update(db, statement, params):
     return rowcount
 
 
+def load_history(db, business_id, channel, customer):
+    """The last few turns with this customer, oldest first."""
+    with db.cursor() as cursor:
+        cursor.execute(
+            "SELECT role, body FROM conversation_messages "
+            "WHERE business_id = %s AND channel = %s AND customer = %s "
+            "AND created_at > now() - make_interval(days => %s) "
+            "ORDER BY id DESC LIMIT %s",
+            (business_id, channel, customer, HISTORY_DAYS, HISTORY_TURNS))
+        rows = cursor.fetchall()
+    return [{"role": role, "content": body} for role, body in reversed(rows)]
+
+
+def save_turns(db, business_id, channel, customer, inbound, outbound):
+    with db.cursor() as cursor:
+        for role, body in (("user", inbound), ("assistant", outbound)):
+            cursor.execute(
+                "INSERT INTO conversation_messages (business_id, channel, customer, role, body) "
+                "VALUES (%s, %s, %s, %s, %s)", (business_id, channel, customer, role, body))
+        cursor.execute("DELETE FROM conversation_messages "
+                       "WHERE created_at < now() - make_interval(days => %s)", (HISTORY_DAYS,))
+    db.commit()
+
+
+def ai_reply(message, business, history, env):
+    return ai_engine.reply(message, business, history, env)
+
+
 def process(payload, config=None, businesses=None, connect=None, send=send_message, env=None):
     """Consume a signed event with at most one send attempt per inbound message.
 
@@ -121,14 +164,15 @@ def process(payload, config=None, businesses=None, connect=None, send=send_messa
     if connect is None:
         import psycopg
         connect = psycopg.connect
-    drafts = draft_replies(payload, businesses, env)
-    if not drafts:
+    items = routed_messages(payload, businesses)
+    if not items:
         # Status updates, media, or a message to an account no business owns.
         log("no_reply_needed", reason="no_text_message_for_known_business")
         return
     with connect(config["DATABASE_URL"]) as db:
         _update(db, SCHEMA, ())
-        for item in drafts:
+        _update(db, CONVERSATION_SCHEMA, ())
+        for item in items:
             business = businesses[item["business_id"]]
             channel = item["channel"]
             # No record or send outside this business's explicit test scope.
@@ -140,6 +184,7 @@ def process(payload, config=None, businesses=None, connect=None, send=send_messa
             if not token:
                 log("skipped", reason="no_token", business=business.id, channel=channel)
                 continue
+            item = rule_decision(item, business, env)
             key = (channel, item["message_id"])
             is_handoff = item["action"] in HANDOFF_ACTIONS
             inserted = _update(
@@ -153,6 +198,19 @@ def process(payload, config=None, businesses=None, connect=None, send=send_messa
                 log("not_sent", reason="duplicate" if not inserted else "handoff",
                     business=business.id, channel=channel, intent=item["intent"])
                 continue
+            # The claim above is committed, so a duplicate event never reaches the AI.
+            history = load_history(db, business.id, channel, item["sender"])
+            ai = ai_reply(item["body"], business, history, env)
+            if ai:
+                item = {**item, **ai}
+                _update(db, "UPDATE message_inbox SET intent = %s, updated_at = now() "
+                            "WHERE channel = %s AND message_id = %s", (item["intent"], *key))
+                if ai["needs_human"]:
+                    log("handoff_requested", business=business.id, channel=channel,
+                        intent=item["intent"])
+            else:
+                log("rule_reply", business=business.id, channel=channel,
+                    ai_enabled=ai_engine.enabled(business, env))
             # A crash after this commit can lose a reply, but cannot duplicate it.
             _update(db, "UPDATE message_inbox SET state = 'attempted', updated_at = now() "
                         "WHERE channel = %s AND message_id = %s AND state = 'pending'", key)
@@ -165,6 +223,7 @@ def process(payload, config=None, businesses=None, connect=None, send=send_messa
                 log("send_failed", business=business.id, channel=channel, **meta_error(exc))
             else:
                 log("sent", business=business.id, channel=channel, intent=item["intent"])
+                save_turns(db, business.id, channel, item["sender"], item["body"], item["reply"])
                 _update(db, "UPDATE message_inbox SET state = 'sent', "
                             "outgoing_message_id = %s, updated_at = now() "
                             "WHERE channel = %s AND message_id = %s", (outgoing_id, *key))
