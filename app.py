@@ -79,6 +79,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(400)
         if not isinstance(payload, dict) or payload.get("object") not in OBJECT_CHANNELS:
             return self.respond(400)
+        log("received", object=payload.get("object"))
         if send_enabled():
             try:
                 process(payload)
