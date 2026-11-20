@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 from webhook_logic import OBJECT_CHANNELS, draft_replies
-from staging_delivery import process, send_enabled
+from staging_delivery import log, process, send_enabled
 
 MAX_BODY_BYTES = 1024 * 1024
 
@@ -71,6 +71,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(400)
         if not verify_signature(body, self.headers.get("X-Hub-Signature-256", ""),
                                 os.environ.get("META_APP_SECRET", "")):
+            log("signature_rejected")
             return self.respond(403)
         try:
             payload = json.loads(body)
@@ -81,14 +82,16 @@ class Handler(BaseHTTPRequestHandler):
         if send_enabled():
             try:
                 process(payload)
-            except Exception:
+            except Exception as exc:
                 # Fail closed. Meta may retry; the durable inbox deduplicates.
+                log("process_failed", error=type(exc).__name__)
                 return self.respond(503)
         else:
             # Default staging mode still drafts and discards without sending.
             try:
                 draft_replies(payload)
-            except Exception:
+            except Exception as exc:
+                log("draft_failed", error=type(exc).__name__)
                 return self.respond(503)
         return self.respond(200, b"ok")
 

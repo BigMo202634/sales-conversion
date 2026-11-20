@@ -94,6 +94,21 @@ class StagingDeliveryTests(unittest.TestCase):
         run(whatsapp_event("Boss 6ml", sender="2348000000001"), send, db, env=env)
         send.assert_called_once()
 
+    def test_failed_send_logs_meta_error_without_customer_data(self):
+        import io
+        from urllib.error import HTTPError
+        body = io.BytesIO(json.dumps({"error": {"code": 190, "type": "OAuthException",
+                                                "message": "Session has expired"}}).encode())
+        failure = HTTPError("https://graph.facebook.com", 401, "Unauthorized", {}, body)
+        db, stderr = FakeDB(), io.StringIO()
+        with patch("sys.stderr", stderr):
+            run(whatsapp_event("OIM BOSS 6ml"), Mock(side_effect=failure), db)
+        line = json.loads(stderr.getvalue().strip().splitlines()[-1])
+        self.assertEqual((line["event"], line["code"], line["http_status"]),
+                         ("send_failed", 190, 401))
+        self.assertNotIn("233123456789", stderr.getvalue())
+        self.assertNotIn("BOSS", stderr.getvalue())
+
     def test_instagram_uses_page_token(self):
         db, send = FakeDB(), Mock(return_value="m_out")
         run(messaging_event("instagram", "Boss 6ml", sender=CUSTOMER_IGSID, account=IG_ID),
