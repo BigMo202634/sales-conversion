@@ -1,4 +1,7 @@
-"""Staging WhatsApp webhook receiver; outbound is disabled by default."""
+"""Staging Meta webhook receiver for WhatsApp, Messenger and Instagram.
+
+Outbound sending is disabled by default.
+"""
 
 import hashlib
 import hmac
@@ -7,8 +10,8 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from webhook_logic import draft_replies
-from staging_delivery import process
+from webhook_logic import OBJECT_CHANNELS, draft_replies
+from staging_delivery import process, send_enabled
 
 MAX_BODY_BYTES = 1024 * 1024
 
@@ -73,9 +76,9 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(body)
         except (UnicodeDecodeError, json.JSONDecodeError):
             return self.respond(400)
-        if not isinstance(payload, dict) or payload.get("object") != "whatsapp_business_account":
+        if not isinstance(payload, dict) or payload.get("object") not in OBJECT_CHANNELS:
             return self.respond(400)
-        if os.environ.get("WA_SEND_ENABLED") == "1":
+        if send_enabled():
             try:
                 process(payload)
             except Exception:
@@ -83,7 +86,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(503)
         else:
             # Default staging mode still drafts and discards without sending.
-            draft_replies(payload)
+            try:
+                draft_replies(payload)
+            except Exception:
+                return self.respond(503)
         return self.respond(200, b"ok")
 
     def log_message(self, format, *args):

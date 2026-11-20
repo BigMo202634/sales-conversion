@@ -1,0 +1,34 @@
+[
+  {
+    "id": "oim-fragrance",
+    "name": "OIM Fragrance",
+    "industry": "perfume-beauty",
+    "currency": "GH₵",
+    "channels": {
+      "whatsapp": "1514208075102159",
+      "instagram": "",
+      "messenger": ""
+    },
+    "catalog": {
+      "products": [
+        {"name": "OIM_BOSS", "aliases": ["boss"]},
+        {"name": "OIM_BILLONAIRE", "aliases": ["billonaire", "billionaire"]},
+        {"name": "OIM_ALPHA", "aliases": ["alpha"]},
+        {"name": "OIM_SEDUCTION", "aliases": ["seduction"]},
+        {"name": "OIM_MIRAYA", "aliases": ["miraya"]}
+      ],
+      "default_prices": {"3ml": 15, "6ml": 25, "12ml": 60, "30ml": 120}
+    },
+    "price_note": " retail",
+    "delivery": "Delivery is free within Kumasi for orders of GH₵200 or more. Tell us your area and order details so the team can confirm delivery options and timing.",
+    "greeting": "Welcome to OIM Fragrance! Are you shopping for yourself, a gift, or a special occasion? I can share the listed retail sizes and prices.",
+    "test_recipients": {},
+    "secrets": {
+      "whatsapp_token": "WA_ACCESS_TOKEN",
+      "whatsapp_test_recipients": "WA_ALLOWED_TEST_RECIPIENTS",
+      "page_token": "OIM_PAGE_ACCESS_TOKEN",
+      "payment_number": "OIM_MOMO_NUMBER",
+      "payment_name": "OIM_MOMO_NAME"
+    }
+  }
+]
