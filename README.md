@@ -6,8 +6,8 @@ Messenger and Instagram DMs. It serves `GET /health`, answers Meta's
 HMAC on every `POST /webhook`.
 
 **By default it drafts replies and discards them. It sends nothing.** Sending is
-gated; see [STAGING_DELIVERY.md](STAGING_DELIVERY.md). When sending is on and
-`ANTHROPIC_API_KEY` is set, Claude writes the replies (see "AI replies" below).
+gated; see [STAGING_DELIVERY.md](STAGING_DELIVERY.md). When sending is on and an AI
+provider is configured, the AI writes the replies (see "AI replies" below).
 Do not connect a live business number yet.
 
 ## How a message flows
@@ -39,11 +39,27 @@ orders, and never shares payment details. When the customer is ready to order
 or upset, the reply says the team will follow up and the event is logged as
 `handoff_requested`.
 
+Pick a provider with `AI_PROVIDER`:
+
 | Env var | Meaning |
 |---|---|
-| `ANTHROPIC_API_KEY` | Required to turn AI replies on. Without it, rule replies are used |
-| `AI_MODEL` | Optional model override (default `claude-opus-5-5`) |
+| `AI_PROVIDER` | `anthropic` (default) or `openai_compatible` |
+| `ANTHROPIC_API_KEY` | For `anthropic`: required. Without it, rule replies are used |
+| `AI_BASE_URL` | For `openai_compatible`: the server's `/v1` URL |
+| `AI_API_KEY` | For `openai_compatible`: the key, if the server needs one |
+| `AI_MODEL` | Model name (required for `openai_compatible`; default `claude-opus-5-5` for `anthropic`) |
 | `AI_REPLIES` | Set to `0` to switch AI off for every business |
+
+Free test setups with `AI_PROVIDER=openai_compatible`:
+
+- Groq free tier: `AI_BASE_URL=https://api.groq.com/openai/v1`,
+  `AI_MODEL=llama-3.3-70b-versatile`, `AI_API_KEY` from console.groq.com.
+- Gemini free tier: `AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai`,
+  `AI_MODEL=gemini-2.5-flash`, `AI_API_KEY` from aistudio.google.com.
+- Ollama on your own computer: `ollama pull qwen2.5:7b`, expose port 11434
+  with a tunnel (for example `cloudflared tunnel --url http://localhost:11434`),
+  then `AI_BASE_URL=https://<tunnel-host>/v1`, `AI_MODEL=qwen2.5:7b`. Render
+  cannot reach `localhost`, and the computer must stay on.
 
 A business can also set `"ai": false` to keep rule replies, and
 `sales_notes` (free text) to give the AI real selling points, e.g. how long a

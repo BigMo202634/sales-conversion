@@ -72,6 +72,37 @@ class AIEngineTests(unittest.TestCase):
         self.assertEqual(client.beta.messages.create.call_args.kwargs["model"],
                          "claude-sonnet-5-5")
 
+    def test_openai_compatible_provider(self):
+        env = {"AI_PROVIDER": "openai_compatible", "AI_BASE_URL": "http://localhost:11434/v1/",
+               "AI_MODEL": "qwen2.5:3b"}
+        sent = {}
+
+        def post(url, body, headers):
+            sent.update(url=url, body=body, headers=headers)
+            content = 'Sure! ```json\n{"reply": "Boss 6ml is GH₵25. For you or a gift?", ' \
+                      '"intent": "price", "needs_human": false}\n```'
+            return {"choices": [{"finish_reason": "stop", "message": {"content": content}}]}
+
+        result = ai_engine.reply("boss 6ml", OIM, (), env, post=post)
+        self.assertEqual(result["reply"], "Boss 6ml is GH₵25. For you or a gift?")
+        self.assertEqual(sent["url"], "http://localhost:11434/v1/chat/completions")
+        self.assertNotIn("Authorization", sent["headers"])
+        self.assertIn("OIM_BOSS", sent["body"]["messages"][0]["content"])
+        self.assertEqual(sent["body"]["messages"][-1], {"role": "user", "content": "boss 6ml"})
+
+        keyed = {**env, "AI_API_KEY": "free-key"}
+        ai_engine.reply("hi", OIM, (), keyed, post=post)
+        self.assertEqual(sent["headers"]["Authorization"], "Bearer free-key")
+
+    def test_openai_compatible_falls_back(self):
+        env = {"AI_PROVIDER": "openai_compatible", "AI_BASE_URL": "http://x/v1", "AI_MODEL": "m"}
+        cut = lambda *_: {"choices": [{"finish_reason": "length", "message": {"content": "{"}}]}
+        self.assertIsNone(ai_engine.reply("hi", OIM, (), env, post=cut))
+        down = Mock(side_effect=ConnectionRefusedError())
+        self.assertIsNone(ai_engine.reply("hi", OIM, (), env, post=down))
+        self.assertIsNone(ai_engine.reply("hi", OIM, (), {**env, "AI_MODEL": ""}, post=down))
+        down.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
