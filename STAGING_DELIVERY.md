@@ -34,8 +34,10 @@ business's test list or the business has no token for that channel. Missing
 `DATABASE_URL` or `GRAPH_VERSION` returns 503 so Meta retries later.
 
 The `message_inbox` table stores channel, inbound message ID, business,
-account, sender, intent, state and the outgoing message ID. It does **not**
-store message text. A failed or timed-out send becomes `review` and is never
+account, sender, intent, state and the outgoing message ID. It does not store
+message text. So the AI can follow a conversation, `conversation_messages`
+keeps the text of sent exchanges (customer message and our reply) for 7 days,
+then deletes it; only the last 12 turns are sent to the AI. A failed or timed-out send becomes `review` and is never
 resent automatically, because Meta may have accepted it. `suppressed` rows
 (handoff, payment, opt-out) need a person to follow up; there is no operator
 inbox or alert yet.

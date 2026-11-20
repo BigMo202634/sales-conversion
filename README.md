@@ -6,8 +6,9 @@ Messenger and Instagram DMs. It serves `GET /health`, answers Meta's
 HMAC on every `POST /webhook`.
 
 **By default it drafts replies and discards them. It sends nothing.** Sending is
-gated; see [STAGING_DELIVERY.md](STAGING_DELIVERY.md). Replies are still
-rule-based, not AI. Do not connect a live business number yet.
+gated; see [STAGING_DELIVERY.md](STAGING_DELIVERY.md). When sending is on and an AI
+provider is configured, the AI writes the replies (see "AI replies" below).
+Do not connect a live business number yet.
 
 ## How a message flows
 
@@ -21,6 +22,48 @@ rule-based, not AI. Do not connect a live business number yet.
 4. `catalog_engine.py` drafts a reply from that business's own catalog,
    currency, delivery note and greeting. Opt-outs, "talk to a human" and
    payment claims are never answered with a sales reply.
+5. If the message passed those guardrails, `ai_engine.py` asks Claude for a
+   salesperson-style reply using only that business's facts and the last few
+   turns of the chat. Any AI failure falls back to the rule reply from step 4.
+
+## AI replies
+
+The rule engine always runs first: opt-outs, "talk to a human", payment
+claims and payment-detail requests never reach the AI. For everything else
+Claude replies like a friendly salesperson: it finds out what the customer
+wants, recommends a listed product and size, handles price worries with a
+smaller listed option, and asks for quantity and delivery area. It may only use
+the products, prices and delivery wording in `businesses.json`; it never
+invents stock, discounts, delivery dates or fees, never confirms payment or
+orders, and never shares payment details. When the customer is ready to order
+or upset, the reply says the team will follow up and the event is logged as
+`handoff_requested`.
+
+Pick a provider with `AI_PROVIDER`:
+
+| Env var | Meaning |
+|---|---|
+| `AI_PROVIDER` | `anthropic` (default) or `openai_compatible` |
+| `ANTHROPIC_API_KEY` | For `anthropic`: required. Without it, rule replies are used |
+| `AI_BASE_URL` | For `openai_compatible`: the server's `/v1` URL |
+| `AI_API_KEY` | For `openai_compatible`: the key, if the server needs one |
+| `AI_MODEL` | Model name (required for `openai_compatible`; default `claude-opus-5-5` for `anthropic`) |
+| `AI_REPLIES` | Set to `0` to switch AI off for every business |
+
+Free test setups with `AI_PROVIDER=openai_compatible`:
+
+- Groq free tier: `AI_BASE_URL=https://api.groq.com/openai/v1`,
+  `AI_MODEL=llama-3.3-70b-versatile`, `AI_API_KEY` from console.groq.com.
+- Gemini free tier: `AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai`,
+  `AI_MODEL=gemini-2.5-flash`, `AI_API_KEY` from aistudio.google.com.
+- Ollama on your own computer: `ollama pull qwen2.5:7b`, expose port 11434
+  with a tunnel (for example `cloudflared tunnel --url http://localhost:11434`),
+  then `AI_BASE_URL=https://<tunnel-host>/v1`, `AI_MODEL=qwen2.5:7b`. Render
+  cannot reach `localhost`, and the computer must stay on.
+
+A business can also set `"ai": false` to keep rule replies, and
+`sales_notes` (free text) to give the AI real selling points, e.g. how long a
+scent lasts or which items are bestsellers.
 
 ## Adding a business
 
@@ -36,6 +79,8 @@ Add an entry to `businesses.json` (or put the whole list in the
 | `catalog.products` | `name`, optional `aliases`, optional `prices` per option (`{"M": 25000}`) |
 | `catalog.default_prices` | Prices shared by every product, e.g. perfume sizes |
 | `delivery`, `greeting`, `price_note` | Optional business wording |
+| `sales_notes` | Optional true selling points the AI may use |
+| `ai` | `false` keeps this business on rule replies |
 | `test_recipients` | Per channel, the only senders who may get real replies while testing |
 | `secrets` | **Names** of env vars holding `whatsapp_token`, `page_token`, `payment_number`, `payment_name` |
 

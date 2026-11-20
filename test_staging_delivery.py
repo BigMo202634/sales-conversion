@@ -17,6 +17,7 @@ class FakeCursor:
     def __init__(self, db):
         self.db = db
         self.rowcount = 0
+        self.result = []
 
     def __enter__(self):
         return self
@@ -24,17 +25,29 @@ class FakeCursor:
     def __exit__(self, *_):
         pass
 
+    def fetchall(self):
+        return self.result
+
     def execute(self, statement, params=()):
         self.rowcount = 0
-        if statement.startswith("INSERT"):
+        if statement.startswith("INSERT INTO conversation_messages"):
+            self.db.history.append(params)
+        elif statement.startswith("INSERT INTO message_inbox"):
             key = params[:2]
             if key not in self.db.rows:
                 self.db.rows[key] = {"business": params[2], "state": params[6],
                                      "outgoing": None}
                 self.rowcount = 1
+        elif statement.startswith("SELECT"):
+            business, channel, customer = params[:3]
+            rows = [(r[3], r[4]) for r in self.db.history
+                    if r[:3] == (business, channel, customer)]
+            self.result = list(reversed(rows))[:params[4]]
         elif statement.startswith("UPDATE"):
             row = self.db.rows[tuple(params[-2:])]
-            if "state = 'attempted'" in statement:
+            if "SET intent" in statement:
+                row["intent"] = params[0]
+            elif "state = 'attempted'" in statement:
                 if row["state"] == "pending":
                     row["state"] = "attempted"
                     self.rowcount = 1
@@ -48,6 +61,7 @@ class FakeCursor:
 class FakeDB:
     def __init__(self):
         self.rows = {}
+        self.history = []
 
     def __enter__(self):
         return self
@@ -62,8 +76,10 @@ class FakeDB:
         pass
 
 
-def run(payload, send, db, env=ENV):
-    process(payload, settings(env), BUSINESSES, connect=lambda _: db, send=send, env=env)
+def run(payload, send, db, env=ENV, ai=None):
+    with patch("staging_delivery.ai_reply", Mock(return_value=ai)) as ai_mock:
+        process(payload, settings(env), BUSINESSES, connect=lambda _: db, send=send, env=env)
+    return ai_mock
 
 
 class StagingDeliveryTests(unittest.TestCase):
@@ -131,6 +147,33 @@ class StagingDeliveryTests(unittest.TestCase):
         self.assertFalse(db.rows)
         run(whatsapp_event("I want a human"), send, db)
         self.assertEqual(db.rows[("whatsapp", "wamid.123")]["state"], "suppressed")
+        send.assert_not_called()
+
+    def test_ai_reply_is_sent_and_remembered(self):
+        db, send = FakeDB(), Mock(return_value="wamid.out")
+        ai = {"intent": "ai_product", "action": "ai_reply", "needs_human": False,
+              "reply": "Boss is our best seller. Is it for you or a gift?"}
+        run(whatsapp_event("which perfume lasts long"), send, db, ai=ai)
+        self.assertEqual(send.call_args.args[0]["reply"], ai["reply"])
+        row = db.rows[("whatsapp", "wamid.123")]
+        self.assertEqual((row["state"], row["intent"]), ("sent", "ai_product"))
+        self.assertEqual([r[3] for r in db.history], ["user", "assistant"])
+        ai_mock = run(whatsapp_event("for my husband", message_id="wamid.124"), send, db, ai=ai)
+        history = ai_mock.call_args.args[2]
+        self.assertEqual(history[0], {"role": "user", "content": "which perfume lasts long"})
+        self.assertEqual(history[1]["role"], "assistant")
+
+    def test_ai_failure_keeps_rule_reply(self):
+        db, send = FakeDB(), Mock(return_value="wamid.out")
+        run(whatsapp_event("OIM BOSS 6ml"), send, db, ai=None)
+        self.assertIn("GH₵25", send.call_args.args[0]["reply"])
+
+    def test_guardrails_never_reach_ai(self):
+        db, send = FakeDB(), Mock()
+        for i, text in enumerate(["I want a human", "I have paid", "STOP"]):
+            ai_mock = run(whatsapp_event(text, message_id=f"wamid.g{i}"), send, db,
+                          ai={"reply": "x"})
+            ai_mock.assert_not_called()
         send.assert_not_called()
 
     def test_http_requires_flag_for_delivery(self):

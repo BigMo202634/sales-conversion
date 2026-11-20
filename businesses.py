@@ -34,6 +34,8 @@ class Business:
     delivery: str = ""
     greeting: str = ""
     price_note: str = ""
+    sales_notes: str = ""
+    ai: bool = True
     test_recipients: dict = field(default_factory=dict)
     secrets: dict = field(default_factory=dict)
 
@@ -85,6 +87,8 @@ def _parse(entry):
         delivery=str(entry.get("delivery", "")),
         greeting=str(entry.get("greeting", "")),
         price_note=str(entry.get("price_note", "")),
+        sales_notes=str(entry.get("sales_notes", "")),
+        ai=entry.get("ai", True) is not False,
         test_recipients=recipients,
         secrets={k: str(v) for k, v in entry.get("secrets", {}).items()},
     )
