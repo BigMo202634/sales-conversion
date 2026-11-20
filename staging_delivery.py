@@ -111,7 +111,7 @@ def process(payload, config=None, businesses=None, connect=None, send=send_messa
             business = businesses[item["business_id"]]
             channel = item["channel"]
             # No record or send outside this business's explicit test scope.
-            if item["sender"] not in business.test_recipients.get(channel, ()):
+            if item["sender"] not in business.recipients(channel, env):
                 continue
             token = business.secret(TOKEN_KEYS[channel], env)
             if not token:

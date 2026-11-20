@@ -18,6 +18,9 @@ Before a controlled test:
    in `businesses.json`, and set the env vars named in its `secrets`:
    a WhatsApp Cloud API token for `whatsapp_token`, and a Page access token
    (Page linked to the Instagram professional account) for `page_token`.
+   A business can also name an env var holding comma-separated test
+   recipients, e.g. `"whatsapp_test_recipients": "WA_ALLOWED_TEST_RECIPIENTS"`
+   in `secrets`; OIM does this so the existing Render settings keep working.
    WhatsApp test recipients are phone numbers in international digits, no
    `+`. Messenger and Instagram test recipients are the page-scoped sender
    IDs Meta shows in the webhook event.

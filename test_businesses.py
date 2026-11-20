@@ -37,9 +37,15 @@ class BusinessConfigTests(unittest.TestCase):
 
     def test_secrets_resolve_from_named_env_vars_only(self):
         oim = sample_businesses()["oim-fragrance"]
-        self.assertEqual(oim.secret("whatsapp_token", {"OIM_WA_ACCESS_TOKEN": "t"}), "t")
+        self.assertEqual(oim.secret("whatsapp_token", {"WA_ACCESS_TOKEN": "t"}), "t")
         self.assertEqual(oim.secret("whatsapp_token", {}), "")
         self.assertEqual(oim.secret("not_configured", {"x": "y"}), "")
+
+    def test_recipients_merge_config_and_env(self):
+        oim = sample_businesses()["oim-fragrance"]
+        env = {"WA_ALLOWED_TEST_RECIPIENTS": "2348000000001, bad, +1"}
+        self.assertEqual(oim.recipients("whatsapp", env), {"233123456789", "2348000000001"})
+        self.assertEqual(oim.recipients("messenger", env), {"7000000001"})
 
 
 if __name__ == "__main__":

@@ -43,6 +43,15 @@ class Business:
         name = self.secrets.get(key)
         return env.get(name, "") if name else ""
 
+    def recipients(self, channel, env=None):
+        """Test recipients from config plus the env var named by
+        secrets["<channel>_test_recipients"] (comma-separated digits)."""
+        listed = set(self.test_recipients.get(channel, ()))
+        extra = self.secret(channel + "_test_recipients", env)
+        listed.update(x.strip() for x in extra.split(",")
+                      if re.fullmatch(r"[1-9][0-9]{4,24}", x.strip()))
+        return listed
+
 
 def _parse(entry):
     if not isinstance(entry, dict):

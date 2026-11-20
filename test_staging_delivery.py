@@ -9,7 +9,7 @@ from fixtures import (CUSTOMER_IGSID, IG_ID, messaging_event, sample_businesses,
 from staging_delivery import ConfigurationError, process, send_enabled, settings
 
 ENV = {"DATABASE_URL": "test-db", "GRAPH_VERSION": "v27.0",
-       "OIM_WA_ACCESS_TOKEN": "wa-token", "OIM_PAGE_ACCESS_TOKEN": "page-token"}
+       "WA_ACCESS_TOKEN": "wa-token", "OIM_PAGE_ACCESS_TOKEN": "page-token"}
 BUSINESSES = sample_businesses()
 
 
@@ -86,6 +86,13 @@ class StagingDeliveryTests(unittest.TestCase):
         self.assertEqual(send.call_args.args[1], "wa-token")
         self.assertEqual(db.rows[("whatsapp", "wamid.123")],
                          {"business": "oim-fragrance", "state": "sent", "outgoing": "wamid.out"})
+
+    def test_current_render_settings_keep_working(self):
+        db, send = FakeDB(), Mock(return_value="wamid.out")
+        env = {"DATABASE_URL": "db", "WA_GRAPH_VERSION": "v25.0", "WA_ACCESS_TOKEN": "wa-token",
+               "WA_ALLOWED_TEST_RECIPIENTS": "2348000000001"}
+        run(whatsapp_event("Boss 6ml", sender="2348000000001"), send, db, env=env)
+        send.assert_called_once()
 
     def test_instagram_uses_page_token(self):
         db, send = FakeDB(), Mock(return_value="m_out")

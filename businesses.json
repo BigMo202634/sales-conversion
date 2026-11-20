@@ -24,7 +24,8 @@
     "greeting": "Welcome to OIM Fragrance! Are you shopping for yourself, a gift, or a special occasion? I can share the listed retail sizes and prices.",
     "test_recipients": {},
     "secrets": {
-      "whatsapp_token": "OIM_WA_ACCESS_TOKEN",
+      "whatsapp_token": "WA_ACCESS_TOKEN",
+      "whatsapp_test_recipients": "WA_ALLOWED_TEST_RECIPIENTS",
       "page_token": "OIM_PAGE_ACCESS_TOKEN",
       "payment_number": "OIM_MOMO_NUMBER",
       "payment_name": "OIM_MOMO_NAME"
