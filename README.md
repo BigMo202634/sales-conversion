@@ -82,11 +82,24 @@ Add an entry to `businesses.json` (or put the whole list in the
 | `sales_notes` | Optional true selling points the AI may use |
 | `ai` | `false` keeps this business on rule replies |
 | `test_recipients` | Per channel, the only senders who may get real replies while testing |
-| `secrets` | **Names** of env vars holding `whatsapp_token`, `page_token`, `payment_number`, `payment_name` |
+| `secrets` | **Names** of env vars holding `whatsapp_token`, `page_token`, `payment_number`, `payment_name`, `owner_alert_numbers` |
 
 Never put tokens or payment details in this repository; set them in Render's
 Environment page under the names listed in `secrets`. A product with no price
 is never quoted: the reply says the team will confirm.
+
+## Owner alerts
+
+When the AI says a customer is ready to order or needs the team, or a rule
+hands the chat over (asks for a person, says they paid, asks for payment
+details), the owner gets a WhatsApp message from the business number with the
+customer's number, a `wa.me` link and the last few messages. Put the owner's
+numbers (international digits, comma-separated) in the env var named by
+`secrets.owner_alert_numbers`, e.g. `OIM_OWNER_ALERT_NUMBERS`. WhatsApp only
+delivers these if the owner messaged the business number in the last 24 hours,
+and in Meta development mode the owner must also be an allowed test number.
+Opt-outs never alert. Render logs show `alert_sent`, `alert_failed` or
+`alert_skipped`.
 
 ## Render Web Service
 

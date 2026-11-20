@@ -176,6 +176,40 @@ class StagingDeliveryTests(unittest.TestCase):
             ai_mock.assert_not_called()
         send.assert_not_called()
 
+    def test_ready_buyer_alerts_owner_once(self):
+        db, send = FakeDB(), Mock(return_value="wamid.out")
+        env = {**ENV, "OIM_OWNER_ALERT_NUMBERS": "233200000001, bad"}
+        ai = {"intent": "ai_ready_to_buy", "action": "ai_handoff", "needs_human": True,
+              "reply": "Noted! We'll confirm availability and delivery shortly."}
+        for _ in range(2):
+            run(whatsapp_event("I'll take 2 Boss 3ml"), send, db, env=env, ai=ai)
+        self.assertEqual(send.call_count, 2)  # one reply, one alert; duplicate ignored
+        alert = send.call_args_list[1].args[0]
+        self.assertEqual((alert["sender"], alert["account_id"], alert["message_id"]),
+                         ("233200000001", "123456789", None))
+        self.assertIn("ready to order", alert["reply"])
+        self.assertIn("wa.me/233123456789", alert["reply"])
+        self.assertIn("I'll take 2 Boss 3ml", alert["reply"])
+
+    def test_rule_handoff_alerts_owner_but_not_customer(self):
+        db, send = FakeDB(), Mock(return_value="wamid.out")
+        env = {**ENV, "OIM_OWNER_ALERT_NUMBERS": "233200000001"}
+        run(whatsapp_event("I have paid"), send, db, env=env)
+        send.assert_called_once()
+        self.assertEqual(send.call_args.args[0]["sender"], "233200000001")
+        self.assertIn("verify", send.call_args.args[0]["reply"])
+        run(whatsapp_event("STOP", message_id="wamid.stop"), send, db, env=env)
+        send.assert_called_once()  # opt-outs never alert
+
+    def test_alert_failure_does_not_break_reply(self):
+        db = FakeDB()
+        send = Mock(side_effect=["wamid.out", TimeoutError("slow")])
+        env = {**ENV, "OIM_OWNER_ALERT_NUMBERS": "233200000001"}
+        ai = {"intent": "ai_ready_to_buy", "action": "ai_handoff", "needs_human": True,
+              "reply": "Noted!"}
+        run(whatsapp_event("I'll take it"), send, db, env=env, ai=ai)
+        self.assertEqual(db.rows[("whatsapp", "wamid.123")]["state"], "sent")
+
     def test_http_requires_flag_for_delivery(self):
         from test_webhook_http import invoke
         body = json.dumps(whatsapp_event()).encode()

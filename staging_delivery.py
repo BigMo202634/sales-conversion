@@ -13,6 +13,7 @@ import sys
 from urllib import error, request
 
 import ai_engine
+import alerts
 import businesses as business_config
 from webhook_logic import routed_messages, rule_decision
 
@@ -100,8 +101,9 @@ def send_message(item, token, config):
         url = base + "/" + item["account_id"] + "/messages"
         body = {"messaging_product": "whatsapp", "recipient_type": "individual",
                 "to": item["sender"], "type": "text",
-                "context": {"message_id": item["message_id"]},
                 "text": {"preview_url": False, "body": item["reply"]}}
+        if item.get("message_id"):
+            body["context"] = {"message_id": item["message_id"]}
     else:
         # Messenger and Instagram (via a linked Facebook Page) use the Send API.
         url = base + "/me/messages"
@@ -197,6 +199,9 @@ def process(payload, config=None, businesses=None, connect=None, send=send_messa
             if not inserted or is_handoff:
                 log("not_sent", reason="duplicate" if not inserted else "handoff",
                     business=business.id, channel=channel, intent=item["intent"])
+                if inserted and item["action"] in alerts.REASONS:
+                    history = load_history(db, business.id, channel, item["sender"])
+                    alerts.notify_owner(business, item, history, item["action"], config, send, env)
                 continue
             # The claim above is committed, so a duplicate event never reaches the AI.
             history = load_history(db, business.id, channel, item["sender"])
@@ -227,3 +232,5 @@ def process(payload, config=None, businesses=None, connect=None, send=send_messa
                 _update(db, "UPDATE message_inbox SET state = 'sent', "
                             "outgoing_message_id = %s, updated_at = now() "
                             "WHERE channel = %s AND message_id = %s", (outgoing_id, *key))
+            if item.get("needs_human"):
+                alerts.notify_owner(business, item, history, "ai_handoff", config, send, env)
