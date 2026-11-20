@@ -65,6 +65,9 @@ def reply(message, business, env=None):
     team = f"the {business.name} team"
     cur, note = business.currency, business.price_note
 
+    if re.search(r"\bdelete my (?:data|chat|messages|conversation)\b", lowered):
+        return {"intent": "delete_data", "action": "delete_data",
+                "reply": "Done. We've deleted your saved conversation with us."}
     if re.search(r"\b(stop|unsubscribe|do not message|don't message)\b", lowered):
         return {"intent": "opt_out", "action": "suppress_followups",
                 "reply": "Understood. We won't send further follow-up messages."}

@@ -47,6 +47,15 @@ class BusinessConfigTests(unittest.TestCase):
         self.assertEqual(oim.recipients("whatsapp", env), {"233123456789", "2348000000001"})
         self.assertEqual(oim.recipients("messenger", env), {"7000000001"})
 
+    def test_live_business_replies_to_everyone(self):
+        from fixtures import oim_entry
+        test_only = business_config.parse([oim_entry()])["oim-fragrance"]
+        live = business_config.parse([oim_entry(live=True)])["oim-fragrance"]
+        self.assertFalse(test_only.can_reply("whatsapp", "233999999999", {}))
+        self.assertTrue(test_only.can_reply("whatsapp", "233123456789", {}))
+        self.assertTrue(live.can_reply("whatsapp", "233999999999", {}))
+        self.assertFalse(business_config.parse([oim_entry(live="yes")])["oim-fragrance"].live)
+
 
 if __name__ == "__main__":
     unittest.main()

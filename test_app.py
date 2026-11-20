@@ -18,6 +18,27 @@ class WebhookVerificationTests(unittest.TestCase):
         self.assertTrue(verify_signature(body, "sha256=" + digest, "app-secret"))
         self.assertFalse(verify_signature(body + b" ", "sha256=" + digest, "app-secret"))
         self.assertFalse(verify_signature(body, "sha256=" + digest, ""))
+        # Any one of several client apps may sign the event.
+        self.assertTrue(verify_signature(body, "sha256=" + digest, ["other", "app-secret"]))
+        self.assertFalse(verify_signature(body, "sha256=" + digest, ["other", ""]))
+
+    def test_app_secrets_include_each_business_app(self):
+        import json
+        from app import app_secrets
+        from fixtures import oim_entry
+        entry = oim_entry()
+        entry["secrets"]["app_secret"] = "OIM_META_APP_SECRET"
+        env = {"META_APP_SECRET": "main", "OIM_META_APP_SECRET": "client",
+               "BUSINESSES_JSON": json.dumps([entry])}
+        self.assertEqual(app_secrets(env), ["main", "client"])
+
+    def test_privacy_pages(self):
+        import pages
+        privacy = pages.render("/privacy", {"PRIVACY_OPERATOR": "Acme <Ltd>",
+                                            "PRIVACY_CONTACT": "privacy@example.com"})
+        self.assertIn("Acme &lt;Ltd&gt;", privacy)
+        self.assertIn("mailto:privacy@example.com", privacy)
+        self.assertIn("delete my data", pages.render("/data-deletion", {}))
 
 
 if __name__ == "__main__":

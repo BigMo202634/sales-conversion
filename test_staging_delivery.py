@@ -246,6 +246,26 @@ class DeliveryTests(unittest.TestCase):
             FakeMeta())
         self.assertEqual(send_reminders(settings(ENV), BUSINESSES, connect, FakeMeta(), ENV), 0)
 
+    def test_live_business_answers_any_customer(self):
+        import businesses as business_config
+        from fixtures import oim_entry
+        live = business_config.parse([oim_entry(live=True)])
+        meta = FakeMeta()
+        with patch("staging_delivery.ai_reply", Mock(return_value=CHAT)):
+            process(whatsapp_event("hi", sender="233999999999"), settings(ENV), live,
+                    connect=connect, send=meta, env=ENV)
+        self.assertEqual(meta.to("233999999999")[0]["reply"], CHAT["reply"])
+
+    def test_delete_my_data_erases_conversation(self):
+        meta = FakeMeta()
+        run(whatsapp_event("I'll take 2"), meta, ai=READY)
+        self.assertTrue(query("SELECT count(*) FROM conversation_messages")[0][0])
+        meta = FakeMeta()
+        run(whatsapp_event("Please delete my data", message_id="wamid.d"), meta, ai=CHAT)
+        self.assertIn("deleted", meta.to(CUSTOMER_WA)[0]["reply"])
+        for table in ("conversation_messages", "handoffs", "alert_links"):
+            self.assertEqual(query(f"SELECT count(*) FROM {table}")[0][0], 0, table)
+
     def test_logs_never_contain_customer_data(self):
         run(whatsapp_event("I have paid for OIM BOSS"), FakeMeta())
         self.assertNotIn(CUSTOMER_WA, self.stderr.getvalue())
