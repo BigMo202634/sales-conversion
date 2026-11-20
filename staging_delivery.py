@@ -123,6 +123,8 @@ def process(payload, config=None, businesses=None, connect=None, send=send_messa
         connect = psycopg.connect
     drafts = draft_replies(payload, businesses, env)
     if not drafts:
+        # Status updates, media, or a message to an account no business owns.
+        log("no_reply_needed", reason="no_text_message_for_known_business")
         return
     with connect(config["DATABASE_URL"]) as db:
         _update(db, SCHEMA, ())
