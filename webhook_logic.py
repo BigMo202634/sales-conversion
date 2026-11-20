@@ -1,81 +1,91 @@
-"""Pure staging adapter from signed Meta events to offline sales reply drafts.
+"""Turn signed Meta events into per-business reply drafts.
 
-This module never calls Meta, an AI provider, or a database. Drafts are
-ephemeral and must not be treated as customer responses.
+Handles WhatsApp Cloud API, Messenger and Instagram messaging events. Each
+message is routed to the business that owns the receiving account; messages to
+unknown accounts are ignored. This module never calls Meta or a database.
 """
 
-import importlib.util
-import os
-from pathlib import Path
+import businesses as business_config
+import catalog_engine
 
-import oim_catalog
-
-
-def _load_prototype():
-    path = Path(__file__).parent / "sales-conversion-mvp" / "agent.py"
-    spec = importlib.util.spec_from_file_location("_offline_sales_agent", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+MAX_TEXT = 4096
+OBJECT_CHANNELS = {
+    "whatsapp_business_account": "whatsapp",
+    "page": "messenger",
+    "instagram": "instagram",
+}
 
 
-_prototype = _load_prototype()
+def _valid(*values):
+    return all(isinstance(v, str) and v.strip() for v in values)
 
 
-def text_messages(payload):
-    """Extract only inbound text messages; ignore status and media events."""
-    if not isinstance(payload, dict):
-        return []
+def _list(value):
+    return value if isinstance(value, list) else []
+
+
+def _dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _whatsapp(entry):
     found = []
-    entries = payload.get("entry", [])
-    if not isinstance(entries, list):
-        return []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        changes = entry.get("changes", [])
-        if not isinstance(changes, list):
-            continue
-        for change in changes:
-            if not isinstance(change, dict):
+    for change in _list(entry.get("changes")):
+        value = _dict(_dict(change).get("value"))
+        account = _dict(value.get("metadata")).get("phone_number_id")
+        for message in _list(value.get("messages")):
+            message = _dict(message)
+            if message.get("type") != "text":
                 continue
-            value = change.get("value", {})
-            if not isinstance(value, dict):
-                continue
-            metadata = value.get("metadata", {})
-            phone_id = metadata.get("phone_number_id") if isinstance(metadata, dict) else None
-            messages = value.get("messages", [])
-            if not isinstance(messages, list):
-                continue
-            for message in messages:
-                if not isinstance(message, dict) or message.get("type") != "text":
-                    continue
-                body = message.get("text", {})
-                body = body.get("body") if isinstance(body, dict) else None
-                sender, message_id = message.get("from"), message.get("id")
-                if not all(isinstance(v, str) and v.strip() for v in (body, sender, message_id)):
-                    continue
-                if len(body) > 4096:
-                    continue
-                found.append({"message_id": message_id, "sender": sender,
-                              "phone_number_id": phone_id, "body": body})
+            found.append((account, message.get("from"), message.get("id"),
+                          _dict(message.get("text")).get("body")))
     return found
 
 
-def draft_replies(payload, industry="oim-fragrance"):
-    """Return safe offline drafts for testing, with no sending or persistence."""
-    if industry not in ("oim-fragrance", "perfume-beauty", "fashion"):
-        raise ValueError("Unsupported industry")
+def _messaging(entry):
+    """Messenger and Instagram share the Messenger Platform event shape."""
+    found = []
+    account = entry.get("id")
+    for event in _list(entry.get("messaging")):
+        event = _dict(event)
+        message = _dict(event.get("message"))
+        if not message or message.get("is_echo"):
+            continue  # Skip our own outgoing messages echoed back.
+        found.append((account, _dict(event.get("sender")).get("id"),
+                      message.get("mid"), message.get("text")))
+    return found
+
+
+def inbound_messages(payload):
+    """Extract inbound text messages; ignore statuses, echoes and media."""
+    if not isinstance(payload, dict):
+        return []
+    channel = OBJECT_CHANNELS.get(payload.get("object"))
+    if channel is None:
+        return []
+    extract = _whatsapp if channel == "whatsapp" else _messaging
+    found = []
+    for entry in _list(payload.get("entry")):
+        if not isinstance(entry, dict):
+            continue
+        for account, sender, message_id, body in extract(entry):
+            account = str(account) if isinstance(account, (str, int)) else None
+            if not _valid(account, sender, message_id, body) or len(body) > MAX_TEXT:
+                continue
+            found.append({"channel": channel, "account_id": account,
+                          "sender": sender, "message_id": message_id, "body": body})
+    return found
+
+
+def draft_replies(payload, businesses=None, env=None):
+    """Return drafts for messages sent to known businesses. Nothing is sent."""
+    businesses = business_config.load() if businesses is None else businesses
     drafts = []
-    for item in text_messages(payload):
-        if industry == "oim-fragrance":
-            decision = oim_catalog.reply(
-                item["body"],
-                momo_number=os.environ.get("OIM_MOMO_NUMBER"),
-                momo_name=os.environ.get("OIM_MOMO_NAME"),
-            )
-        else:
-            decision = _prototype.reply(item["body"], industry)
-        drafts.append({**item, "intent": decision["intent"],
+    for item in inbound_messages(payload):
+        business = business_config.find(businesses, item["channel"], item["account_id"])
+        if business is None:
+            continue
+        decision = catalog_engine.reply(item["body"], business, env)
+        drafts.append({**item, "business_id": business.id, "intent": decision["intent"],
                        "reply": decision["reply"], "action": decision["action"]})
     return drafts

@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from app import Handler
-from test_webhook_logic import event
+from fixtures import messaging_event, whatsapp_event as event
 
 
 def invoke(method, path, body=b"", headers=None):
@@ -47,6 +47,19 @@ class WebhookHTTPTests(unittest.TestCase):
             self.assertEqual(invoke("POST", "/webhook", body,
                                     {"X-Hub-Signature-256": "sha256=" + "0" * 64}), (403, b""))
             draft.assert_called_once()
+
+    def test_messenger_and_instagram_objects_accepted(self):
+        def signed(payload):
+            body = json.dumps(payload).encode()
+            sig = hmac.new(b"test-app-secret", body, hashlib.sha256).hexdigest()
+            return body, {"X-Hub-Signature-256": "sha256=" + sig}
+        with patch("app.draft_replies") as draft:
+            for obj in ("page", "instagram"):
+                self.assertEqual(invoke("POST", "/webhook", *signed(messaging_event(obj))),
+                                 (200, b"ok"))
+            self.assertEqual(draft.call_count, 2)
+            self.assertEqual(invoke("POST", "/webhook", *signed({"object": "user"})),
+                             (400, b""))
 
 
 if __name__ == "__main__":

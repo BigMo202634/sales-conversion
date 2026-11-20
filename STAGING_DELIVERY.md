@@ -1,42 +1,41 @@
-# OIM test delivery gate
+# Test delivery gate
 
-The current Render service stays in draft-only mode. `WA_SEND_ENABLED` is not
-set, so signed events are acknowledged without sending messages or storing
-customer details. Do not enter the webhook callback in Meta for the live
-business number yet.
+Sending stays off until `SEND_ENABLED=1` (the old `WA_SEND_ENABLED=1` also
+works). Without it, signed events are drafted and discarded: nothing is sent
+or stored.
 
-The optional send path in `staging_delivery.py` requires a durable PostgreSQL
-database. Render's free web service has an ephemeral filesystem and cannot
-hold a reliable local SQLite inbox. A free Render Postgres database expires
-after 30 days and is only suitable for short testing.
+The send path in `staging_delivery.py` needs a durable PostgreSQL database.
+Render's free web service has an ephemeral filesystem, and a free Render
+Postgres database expires after 30 days, so it only suits short testing.
 
 Before a controlled test:
 
-1. Provision a durable PostgreSQL database. Set its private `DATABASE_URL` in
-   Render. Use a paid always-on web service before production traffic.
-2. Change Render's build command to
-   `python -m pip install -r requirements.txt && python -m compileall -q app.py staging_delivery.py`.
-3. Set `WA_ACCESS_TOKEN` to a Meta token with the required messaging access,
-   `WA_PHONE_NUMBER_ID` to the **test** business phone ID, and
-   `WA_GRAPH_VERSION` to the Meta Graph API version in that test app.
-4. Set `WA_ALLOWED_TEST_RECIPIENTS` to comma-separated, international-format
-   digits for explicit test recipients only (for example `233...`). No `+`.
-5. After confirming those settings and the Meta test number, set
-   `WA_SEND_ENABLED=1` in the staging service. The existing
-   `META_APP_SECRET` and `WA_VERIFY_TOKEN` must remain private.
-6. Test one inbound catalog question and a repeated copy of the same signed
-   event. Check that exactly one outbound message is recorded. Test STOP,
-   human handoff, payment confirmation, and unlisted recipients: none should
-   produce an automatic reply.
+1. Provision PostgreSQL and set its private `DATABASE_URL` in Render. Use a
+   paid always-on web service before production traffic.
+2. Set `GRAPH_VERSION` to the Meta Graph API version of the test app
+   (for example `v23.0`).
+3. For each test business, fill in its `channels` IDs and `test_recipients`
+   in `businesses.json`, and set the env vars named in its `secrets`:
+   a WhatsApp Cloud API token for `whatsapp_token`, and a Page access token
+   (Page linked to the Instagram professional account) for `page_token`.
+   WhatsApp test recipients are phone numbers in international digits, no
+   `+`. Messenger and Instagram test recipients are the page-scoped sender
+   IDs Meta shows in the webhook event.
+4. Set `SEND_ENABLED=1`.
+5. Per channel, test one product question and a repeated copy of the same
+   signed event: exactly one reply should be recorded. Test STOP, "human",
+   "I have paid" and an unlisted sender: none should get an automatic reply.
 
-The database stores an inbound message ID, sender, business phone ID, intent,
-state and optional outgoing Meta message ID. It does **not** store the body or
-draft. If a Meta send attempt fails or times out, the row becomes `review`.
-Never automatically resend it: Meta might have accepted the original request.
-`suppressed` rows require operator handling for human and payment requests.
-There is no operator inbox or automatic retry worker yet.
+A message is skipped (no record, no send) when its sender isn't on that
+business's test list or the business has no token for that channel. Missing
+`DATABASE_URL` or `GRAPH_VERSION` returns 503 so Meta retries later.
 
-The sender allowlist and matching business phone ID are required even when
-`WA_SEND_ENABLED=1`; a missing setting returns 503. The Meta callback and API
-subdomain DNS remain unchanged until end-to-end test delivery and production
-readiness are established.
+The `message_inbox` table stores channel, inbound message ID, business,
+account, sender, intent, state and the outgoing message ID. It does **not**
+store message text. A failed or timed-out send becomes `review` and is never
+resent automatically, because Meta may have accepted it. `suppressed` rows
+(handoff, payment, opt-out) need a person to follow up; there is no operator
+inbox or alert yet.
+
+The Meta callback and the API subdomain stay unchanged until end-to-end test
+delivery and production readiness are established.

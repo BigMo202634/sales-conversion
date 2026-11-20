@@ -1,7 +1,9 @@
-"""Opt-in, test-recipient-only WhatsApp reply delivery with durable deduplication.
+"""Opt-in, test-recipient-only reply delivery with durable deduplication.
 
-No send occurs unless every required production setting is present. A failed or
-ambiguous send is held for manual review, never retried automatically.
+Works per business and per channel (WhatsApp, Messenger, Instagram). Nothing is
+sent unless SEND_ENABLED=1, the global settings are present, the business has a
+token for that channel, and the sender is on that business's test list. A failed
+or ambiguous send is held for manual review, never retried automatically.
 """
 
 import json
@@ -9,113 +11,132 @@ import os
 import re
 from urllib import request
 
+import businesses as business_config
 from webhook_logic import draft_replies
 
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS webhook_inbox (
-    message_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS message_inbox (
+    channel TEXT NOT NULL CHECK (channel IN ('whatsapp', 'messenger', 'instagram')),
+    message_id TEXT NOT NULL,
+    business_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
     sender TEXT NOT NULL,
-    phone_number_id TEXT NOT NULL,
     intent TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('pending', 'suppressed', 'attempted', 'sent', 'review')),
-    meta_message_id TEXT,
+    outgoing_message_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (channel, message_id)
 )
 """
+
+HANDOFF_ACTIONS = ("human_handoff", "verify_payment", "suppress_followups",
+                   "request_payment_details")
+TOKEN_KEYS = {"whatsapp": "whatsapp_token", "messenger": "page_token",
+              "instagram": "page_token"}
 
 
 class ConfigurationError(RuntimeError):
     pass
 
 
+def send_enabled(env=None):
+    env = os.environ if env is None else env
+    return "1" in (env.get("SEND_ENABLED"), env.get("WA_SEND_ENABLED"))
+
+
 def settings(env=None):
     env = os.environ if env is None else env
-    required = ("DATABASE_URL", "WA_ACCESS_TOKEN", "WA_PHONE_NUMBER_ID",
-                "WA_GRAPH_VERSION", "WA_ALLOWED_TEST_RECIPIENTS")
-    if any(not env.get(key) for key in required):
+    version = env.get("GRAPH_VERSION") or env.get("WA_GRAPH_VERSION") or ""
+    if not env.get("DATABASE_URL") or not version:
         raise ConfigurationError("Missing delivery configuration")
-    recipients = {x.strip() for x in env["WA_ALLOWED_TEST_RECIPIENTS"].split(",") if x.strip()}
-    if not recipients or any(not re.fullmatch(r"[1-9][0-9]{6,14}", x) for x in recipients):
-        raise ConfigurationError("Invalid test-recipient allowlist")
-    if not re.fullmatch(r"v[0-9]+\.[0-9]+", env["WA_GRAPH_VERSION"]):
+    if not re.fullmatch(r"v[0-9]+\.[0-9]+", version):
         raise ConfigurationError("Invalid Graph API version")
-    if not re.fullmatch(r"[0-9]+", env["WA_PHONE_NUMBER_ID"]):
-        raise ConfigurationError("Invalid business phone ID")
-    return {**{key: env[key] for key in required}, "recipients": recipients}
+    return {"DATABASE_URL": env["DATABASE_URL"], "GRAPH_VERSION": version}
 
 
-def send_text(item, config):
-    """Return Meta's message ID; network failures are ambiguous to the caller."""
-    url = ("https://graph.facebook.com/" + config["WA_GRAPH_VERSION"] + "/" +
-           config["WA_PHONE_NUMBER_ID"] + "/messages")
-    body = json.dumps({"messaging_product": "whatsapp", "recipient_type": "individual",
-                       "to": item["sender"], "type": "text",
-                       "context": {"message_id": item["message_id"]},
-                       "text": {"preview_url": False, "body": item["reply"]}}).encode()
-    req = request.Request(url, body, method="POST", headers={
-        "Authorization": "Bearer " + config["WA_ACCESS_TOKEN"],
-        "Content-Type": "application/json"})
+def send_message(item, token, config):
+    """Send one reply and return Meta's message ID.
+
+    Network failures are ambiguous to the caller: Meta may have accepted it.
+    """
+    base = "https://graph.facebook.com/" + config["GRAPH_VERSION"]
+    if item["channel"] == "whatsapp":
+        url = base + "/" + item["account_id"] + "/messages"
+        body = {"messaging_product": "whatsapp", "recipient_type": "individual",
+                "to": item["sender"], "type": "text",
+                "context": {"message_id": item["message_id"]},
+                "text": {"preview_url": False, "body": item["reply"]}}
+    else:
+        # Messenger and Instagram (via a linked Facebook Page) use the Send API.
+        url = base + "/me/messages"
+        body = {"recipient": {"id": item["sender"]}, "messaging_type": "RESPONSE",
+                "message": {"text": item["reply"]}}
+    req = request.Request(url, json.dumps(body).encode(), method="POST", headers={
+        "Authorization": "Bearer " + token, "Content-Type": "application/json"})
     with request.urlopen(req, timeout=8) as response:
         result = json.load(response)
-    return result["messages"][0]["id"]
+    if item["channel"] == "whatsapp":
+        return result["messages"][0]["id"]
+    return result["message_id"]
 
 
-def process(payload, config=None, connect=None, send=send_text):
-    """Consume a signed event with at-most-one send attempt per inbound ID.
+def _update(db, statement, params):
+    with db.cursor() as cursor:
+        cursor.execute(statement, params)
+        rowcount = cursor.rowcount
+    db.commit()
+    return rowcount
+
+
+def process(payload, config=None, businesses=None, connect=None, send=send_message, env=None):
+    """Consume a signed event with at most one send attempt per inbound message.
 
     The claim is committed before the network call. If that call fails or the
     process crashes, the attempted row blocks retries and needs manual review.
     """
-    config = settings() if config is None else config
+    env = os.environ if env is None else env
+    config = settings(env) if config is None else config
+    businesses = business_config.load(env) if businesses is None else businesses
     if connect is None:
         import psycopg
         connect = psycopg.connect
-    drafts = draft_replies(payload)
+    drafts = draft_replies(payload, businesses, env)
     if not drafts:
         return
     with connect(config["DATABASE_URL"]) as db:
-        with db.cursor() as cursor:
-            cursor.execute(SCHEMA)
-        db.commit()
+        _update(db, SCHEMA, ())
         for item in drafts:
-            sender = item["sender"]
-            phone_id = item["phone_number_id"]
-            # No record or send for numbers outside the explicit test scope.
-            if (sender not in config["recipients"] or
-                    phone_id != config["WA_PHONE_NUMBER_ID"]):
+            business = businesses[item["business_id"]]
+            channel = item["channel"]
+            # No record or send outside this business's explicit test scope.
+            if item["sender"] not in business.test_recipients.get(channel, ()):
                 continue
-            is_handoff = item["action"] in ("human_handoff", "verify_payment",
-                                             "suppress_followups", "request_payment_details")
-            initial = "suppressed" if is_handoff else "pending"
-            with db.cursor() as cursor:
-                cursor.execute(
-                    "INSERT INTO webhook_inbox (message_id, sender, phone_number_id, intent, state) "
-                    "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (message_id) DO NOTHING",
-                    (item["message_id"], sender, phone_id, item["intent"], initial))
-                inserted = cursor.rowcount == 1
-            db.commit()
+            token = business.secret(TOKEN_KEYS[channel], env)
+            if not token:
+                continue
+            key = (channel, item["message_id"])
+            is_handoff = item["action"] in HANDOFF_ACTIONS
+            inserted = _update(
+                db,
+                "INSERT INTO message_inbox (channel, message_id, business_id, account_id, "
+                "sender, intent, state) VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (channel, message_id) DO NOTHING",
+                (*key, business.id, item["account_id"], item["sender"], item["intent"],
+                 "suppressed" if is_handoff else "pending")) == 1
             if not inserted or is_handoff:
                 continue
             # A crash after this commit can lose a reply, but cannot duplicate it.
-            with db.cursor() as cursor:
-                cursor.execute("UPDATE webhook_inbox SET state = 'attempted', updated_at = now() "
-                               "WHERE message_id = %s AND state = 'pending'",
-                               (item["message_id"],))
-            db.commit()
+            _update(db, "UPDATE message_inbox SET state = 'attempted', updated_at = now() "
+                        "WHERE channel = %s AND message_id = %s AND state = 'pending'", key)
             try:
-                outgoing_id = send(item, config)
+                outgoing_id = send(item, token, config)
             except Exception:
                 # No automatic retry: a timeout may mean Meta accepted the send.
-                with db.cursor() as cursor:
-                    cursor.execute("UPDATE webhook_inbox SET state = 'review', updated_at = now() "
-                                   "WHERE message_id = %s", (item["message_id"],))
-                db.commit()
+                _update(db, "UPDATE message_inbox SET state = 'review', updated_at = now() "
+                            "WHERE channel = %s AND message_id = %s", key)
             else:
-                with db.cursor() as cursor:
-                    cursor.execute("UPDATE webhook_inbox SET state = 'sent', "
-                                   "meta_message_id = %s, updated_at = now() "
-                                   "WHERE message_id = %s",
-                                   (outgoing_id, item["message_id"]))
-                db.commit()
+                _update(db, "UPDATE message_inbox SET state = 'sent', "
+                            "outgoing_message_id = %s, updated_at = now() "
+                            "WHERE channel = %s AND message_id = %s", (outgoing_id, *key))
