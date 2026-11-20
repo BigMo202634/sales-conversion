@@ -14,7 +14,8 @@ Two providers:
 
 import json
 import os
-from urllib import request
+import sys
+from urllib import error, request
 
 DEFAULT_MODEL = "claude-opus-5-5"
 INTENTS = ["greeting", "catalog", "product", "price", "objection", "delivery",
@@ -94,7 +95,8 @@ def _openai_compatible(messages, business, env, post=None):
             "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": system_prompt(business) + JSON_INSTRUCTION},
                          *messages]}
-    headers = {"Content-Type": "application/json"}
+    # Some hosts (Groq sits behind Cloudflare) reject Python's default user agent.
+    headers = {"Content-Type": "application/json", "User-Agent": "sales-conversion-agent/1.0"}
     if env.get("AI_API_KEY"):
         headers["Authorization"] = "Bearer " + env["AI_API_KEY"]
     if post is None:
@@ -124,6 +126,20 @@ def _anthropic(messages, business, env, client=None):
     if response.stop_reason != "end_turn":
         raise ValueError("incomplete reply")
     return next(b.text for b in response.content if b.type == "text")
+
+
+def _log_failure(exc, env):
+    """One JSON log line explaining why the AI was skipped. No customer text."""
+    fields = {"event": "ai_failed", "provider": provider(env), "error": type(exc).__name__}
+    if isinstance(exc, error.HTTPError):
+        fields["http_status"] = exc.code
+        try:
+            fields["detail"] = exc.read().decode("utf-8", "replace")[:200]
+        except Exception:
+            pass
+    elif isinstance(exc, (error.URLError, ValueError, KeyError)):
+        fields["detail"] = str(exc)[:200]
+    print(json.dumps(fields), file=sys.stderr, flush=True)
 
 
 def _parse(text):
@@ -163,8 +179,9 @@ def reply(message, business, history=(), env=None, client=None, post=None):
         result = _parse(text)
         answer = result["reply"].strip()
         if not answer:
-            return None
-    except Exception:
+            raise ValueError("empty reply")
+    except Exception as exc:
+        _log_failure(exc, env)
         return None
     return {"intent": "ai_" + result["intent"],
             "action": "ai_handoff" if result["needs_human"] else "ai_reply",
