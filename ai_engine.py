@@ -91,7 +91,7 @@ JSON_INSTRUCTION = ("\n\nAnswer with only a JSON object, no other text: "
 def _openai_compatible(messages, business, env, post=None):
     """Return the model's raw JSON text from an OpenAI-style chat endpoint."""
     url = env["AI_BASE_URL"].rstrip("/") + "/chat/completions"
-    body = {"model": env["AI_MODEL"], "temperature": 0.4, "max_tokens": 600,
+    body = {"model": env["AI_MODEL"], "temperature": 0.4, "max_tokens": 2000,  # room for reasoning models
             "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": system_prompt(business) + JSON_INSTRUCTION},
                          *messages]}
